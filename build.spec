@@ -59,7 +59,7 @@ tcl_dir, tk_dir = _find_tcl_tk()
 datas = [('packing_label.css', '.')]
 hidden = ['tkinter', 'tkinter.ttk', 'tkinter.messagebox', 'tkinter.filedialog',
           'json', 'os', 'tempfile', 'webbrowser', 'datetime', 'dataclasses', 'typing',
-          'updater']
+          'updater', 'tray', 'pystray', 'pystray._win32', 'PIL']
 
 if tcl_dir and tk_dir:
     datas.append((tcl_dir, 'tcl\\' + Path(tcl_dir).name))

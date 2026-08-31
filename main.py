@@ -1302,7 +1302,29 @@ def main():
         root.iconbitmap(default=os.path.join(os.path.dirname(__file__),"icon.ico"))
     except: pass
     app = PackingApp(root)
+
+    # 常驻托盘：点 X 最小化到托盘，托盘可打开主窗口/检查更新/退出
+    try:
+        from tray import TrayApp
+        tray = TrayApp(
+            root,
+            app_name="自动装箱打印系统",
+            on_check_update=app.on_check_update_click,
+            on_quit=None,
+        )
+        tray.start()
+    except Exception as e:
+        print(f"[main] 托盘加载失败（不影响主程序）: {e}", file=sys.stderr)
+        tray = None
+
     root.mainloop()
+
+    # mainloop 结束后清理托盘
+    if tray is not None:
+        try:
+            tray.stop()
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     main()
