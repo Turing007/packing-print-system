@@ -3,15 +3,74 @@
 """
 import json
 import os
+import shutil
+import sys
 from datetime import datetime
 from packing import PackingRecord, BoxLabel
 
 
-DATA_DIR = "data"
+# 数据目录：固定到 EXE 同级（frozen）或源码同级（开发模式）
+# 不再依赖 cwd，避免双击 EXE 时数据写到错误位置
+def _resolve_data_dir() -> str:
+    if getattr(sys, "frozen", False):
+        # 打包后：用 EXE 所在目录
+        base = os.path.dirname(sys.executable)
+    else:
+        # 源码：用 storage.py 所在目录
+        base = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(base, "data")
+    return data_dir
+
+
+DATA_DIR = _resolve_data_dir()
+
+# 自动备份：每次保存保留最近 5 份历史（products.json.bak 是最新，.bak.4 最旧）
+MAX_BACKUPS = 5
+# 哪些文件需要备份（用户录入的核心数据，不要备份 UI 列宽这种临时配置）
+BACKUP_FILES = {"products.json", "order_history.json", "current_packing.json"}
 
 
 def _ensure_dir():
     os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def _rotate_backup(filepath: str):
+    """滚动备份：foo.json.bak.4 → 删，.bak.3 → .bak.4，...，.bak → .bak.1，foo.json → .bak"""
+    if not os.path.exists(filepath):
+        return
+    base = os.path.basename(filepath)
+    if base not in BACKUP_FILES:
+        return  # 不备份的文件直接跳过
+
+    data_dir = os.path.dirname(filepath)
+    # 删除最旧的
+    oldest = os.path.join(data_dir, f"{base}.bak.{MAX_BACKUPS - 1}")
+    if os.path.exists(oldest):
+        try:
+            os.remove(oldest)
+        except Exception:
+            pass
+    # 依次往后滚动
+    for i in range(MAX_BACKUPS - 2, 0, -1):
+        old = os.path.join(data_dir, f"{base}.bak.{i}")
+        new = os.path.join(data_dir, f"{base}.bak.{i + 1}")
+        if os.path.exists(old):
+            try:
+                shutil.move(old, new)
+            except Exception:
+                pass
+    # .bak → .bak.1
+    cur_bak = os.path.join(data_dir, f"{base}.bak")
+    if os.path.exists(cur_bak):
+        try:
+            shutil.move(cur_bak, os.path.join(data_dir, f"{base}.bak.1"))
+        except Exception:
+            pass
+    # 当前文件 → .bak（先复制再写，避免备份和最新值指向同一文件）
+    try:
+        shutil.copy2(filepath, cur_bak)
+    except Exception:
+        pass
 
 
 def _load_json(filename: str, default=None):
@@ -28,8 +87,22 @@ def _load_json(filename: str, default=None):
 def _save_json(filename: str, data):
     _ensure_dir()
     filepath = os.path.join(DATA_DIR, filename)
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    # 先滚动备份（写入前的"上一版"才是真正的备份）
+    _rotate_backup(filepath)
+    # 原子写入：先写临时文件，再 rename，避免中途崩溃损坏数据
+    tmp = filepath + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, filepath)
+    except Exception:
+        # 写入失败也要清理临时文件
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+        raise
 
 
 def save_packing(products, boxes, merge_tail=False, remark="", order_remark=""):

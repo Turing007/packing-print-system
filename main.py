@@ -1190,17 +1190,6 @@ class PackingApp:
             delete_order_history(indexes)
             self.refresh_order_history()
 
-def main():
-    root = tk.Tk()
-    root.title("自动装箱打印系统")
-    try:
-        root.iconbitmap(default=os.path.join(os.path.dirname(__file__),"icon.ico"))
-    except: pass
-    app = PackingApp(root)
-    root.mainloop()
-
-if __name__ == "__main__":
-    main()
 
     # ============================================================
     # 自动更新（菜单 + 后台检测 + 弹窗）
@@ -1305,3 +1294,15 @@ if __name__ == "__main__":
             "关于",
             f"装箱打印系统\nv{get_current_version()}\n\n设计为 Windows 桌面工具，仅用于内部使用。"
         )
+
+def main():
+    root = tk.Tk()
+    root.title("自动装箱打印系统")
+    try:
+        root.iconbitmap(default=os.path.join(os.path.dirname(__file__),"icon.ico"))
+    except: pass
+    app = PackingApp(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
