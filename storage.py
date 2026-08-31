@@ -23,12 +23,92 @@ def _resolve_data_dir() -> str:
     return data_dir
 
 
-DATA_DIR = _resolve_data_dir()
+# 自定义数据存储位置：标记文件固定放在默认数据目录里，记录用户选择的数据目录
+LOCATION_MARKER_FILE = "data_location.json"
+
+
+def _apply_location_marker() -> str:
+    """启动时读标记：用户设置过自定义数据目录（且目录存在）则使用之。"""
+    default = _resolve_data_dir()
+    try:
+        with open(os.path.join(default, LOCATION_MARKER_FILE), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        custom = str(data.get("data_dir", "")).strip()
+        if custom and os.path.isdir(custom):
+            return os.path.abspath(custom)
+    except Exception:
+        pass
+    return default
+
+
+DATA_DIR = _apply_location_marker()
 
 # 自动备份：每次保存保留最近 5 份历史（products.json.bak 是最新，.bak.4 最旧）
 MAX_BACKUPS = 5
 # 哪些文件需要备份（用户录入的核心数据，不要备份 UI 列宽这种临时配置）
 BACKUP_FILES = {"products.json", "order_history.json", "current_packing.json"}
+
+
+def get_data_dir() -> str:
+    """当前生效的数据目录。"""
+    return DATA_DIR
+
+
+def get_default_data_dir() -> str:
+    """默认数据目录（EXE/源码同级下的 data），位置标记文件也固定放这里。"""
+    return _resolve_data_dir()
+
+
+def set_custom_data_dir(path) -> str:
+    """切换数据存储位置：产品/订单等所有数据表整体迁移。
+
+    - 当前数据目录下的 .json 数据表（含滚动备份）复制到新位置；旧目录文件全部保留作备份；
+    - 在默认数据目录写标记文件，下次启动自动使用新位置；path 为 None/空串表示恢复默认；
+    - 目录不可写等情况直接抛异常，不部分生效。
+    返回切换后生效的数据目录。
+    """
+    global DATA_DIR
+    default_dir = _resolve_data_dir()
+    if path is None or not str(path).strip():
+        new_dir = default_dir
+    else:
+        new_dir = os.path.abspath(str(path).strip())
+    if os.path.abspath(DATA_DIR) == os.path.abspath(new_dir):
+        return DATA_DIR
+
+    os.makedirs(new_dir, exist_ok=True)
+    # 可写性探测：建/删一个临时子目录（失败即抛错，避免切到不可写位置后丢数据）
+    probe_dir = os.path.join(new_dir, ".write_probe")
+    os.makedirs(probe_dir, exist_ok=True)
+    os.rmdir(probe_dir)
+
+    # 复制现有数据表到新位置
+    if os.path.isdir(DATA_DIR):
+        for name in os.listdir(DATA_DIR):
+            if not name.lower().endswith(".json") or name == LOCATION_MARKER_FILE:
+                continue
+            src = os.path.join(DATA_DIR, name)
+            if os.path.isfile(src):
+                shutil.copy2(src, os.path.join(new_dir, name))
+
+    # 在默认数据目录写位置标记（安全临时文件 + 原子替换）
+    os.makedirs(default_dir, exist_ok=True)
+    payload = {"data_dir": "" if os.path.abspath(new_dir) == os.path.abspath(default_dir) else new_dir}
+    fd, tmp_path = tempfile.mkstemp(dir=default_dir, prefix="location_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, os.path.join(default_dir, LOCATION_MARKER_FILE))
+    except Exception:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        raise
+
+    DATA_DIR = new_dir
+    return DATA_DIR
 
 
 def _ensure_dir():

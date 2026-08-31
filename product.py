@@ -6,6 +6,7 @@ from typing import Optional
 import json
 import os
 import re
+import sys
 import tempfile
 
 
@@ -85,7 +86,14 @@ class Product:
 class ProductStore:
     """产品本地存储（JSON文件）"""
 
-    def __init__(self, data_dir: str = "data"):
+    def __init__(self, data_dir: str = None):
+        # 默认与 storage 一致：EXE/源码同级下的 data（不依赖 cwd，避免双击 EXE 时数据写错位置）
+        if data_dir is None:
+            if getattr(sys, "frozen", False):
+                base = os.path.dirname(sys.executable)
+            else:
+                base = os.path.dirname(os.path.abspath(__file__))
+            data_dir = os.path.join(base, "data")
         self.data_dir = os.path.abspath(data_dir)
         self.file = os.path.join(self.data_dir, "products.json")
         self.products: list = []

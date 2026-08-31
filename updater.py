@@ -3,10 +3,11 @@
 自动更新模块 - 通过 GitHub Releases 检查/下载/安装新版本。
 
 设计要点：
-1. 真实版本号硬编码于 __CURRENT_VERSION__，spec / 安装器 / 运行时均读这里。
+1. 真实版本号硬编码于 __CURRENT_VERSION__，spec / 安装器 / 运行时均读这里；
+   判断"当前是什么版本"只认程序自身，不读安装器写入的 version.json（仅诊断用）。
 2. 启动后由 main.py 在后台线程调用 check_update_async()，有更新时只在顶栏按钮显示红点，不打扰用户。
 3. 用户点击主界面「检查更新」按钮 → 同步检查 → 弹窗展示结果 → 一键跳到下载页或在本地下载安装器并启动。
-4. 优先读取安装目录下的 version.json（如果存在），用于在更新刚完成时显示最新版本号。
+4. 下载完成后 main.py 主动退出程序释放 exe 文件锁，安装器（内含占用检测与重试提示）才能可靠替换主程序。
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from dataclasses import dataclass, asdict
 from typing import Callable, Optional
 
 # ========== 配置 ==========
-__CURRENT_VERSION__ = "1.0.2"
+__CURRENT_VERSION__ = "1.0.3"
 GITHUB_OWNER = "Turing007"
 GITHUB_REPO = "packing-print-system"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
@@ -62,32 +63,13 @@ class UpdateInfo:
 
 
 # ========== 工具函数 ==========
-def _get_install_dir() -> str:
-    """获取当前 EXE 所在目录（frozen 时）或脚本所在目录（开发时）。"""
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
-
-
-def _local_version_path() -> str:
-    return os.path.join(_get_install_dir(), "version.json")
-
-
 def get_current_version() -> str:
+    """当前版本以程序自身内置的 __CURRENT_VERSION__ 为准。
+
+    不再读取安装器写入的 version.json：曾出现过安装器升级失败但
+    version.json 已写成新版号，导致旧程序误以为自己已是新版。
+    version.json 仅保留作诊断用途。
     """
-    优先读取安装目录下的 version.json（更新后由安装器写入新版本号）。
-    兜底使用 __CURRENT_VERSION__。
-    """
-    try:
-        path = _local_version_path()
-        if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            v = str(data.get("version", "")).strip()
-            if v:
-                return v
-    except Exception:
-        pass
     return __CURRENT_VERSION__
 
 

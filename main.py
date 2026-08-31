@@ -31,12 +31,13 @@ def _configure_tcl_tk() -> None:
 _configure_tcl_tk()
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import os, tempfile, webbrowser
 from datetime import datetime
 from product import Product, ProductStore, format_box_sizes
 from packing import calculate_boxes, generate_box_label_html, generate_individual_box_labels_html, BoxLabel, merge_selected_tail_boxes as merge_tail_boxes
 from storage import save_packing, load_current_packing, clear_current_packing, get_packing_history, delete_history_record, save_print_log, get_combined_history, get_packing_history_by_id, save_order_to_history, load_order_history, delete_order_history, load_order_history_column_widths, save_order_history_column_widths
+import storage
 import single_instance
 from updater import (
     check_update,
@@ -102,7 +103,8 @@ class PackingApp:
         self.root = root
         self.root.title("自动装箱打印系统")
         self.root.geometry("1500x900")
-        self.store = ProductStore()
+        self.store = ProductStore(storage.get_data_dir())
+        self.tray = None  # main() 创建托盘后回填；用于升级前主动退出
         self.merge_tail = tk.BooleanVar(value=False)
         self.current_boxes = []
         self.box_row_indexes = {}
@@ -1217,6 +1219,8 @@ class PackingApp:
         self._update_menu_label_text = "检查更新"
         help_menu.add_command(label=self._update_menu_label_text, command=self.on_check_update_click)
         help_menu.add_command(label="打开发布页", command=open_releases_page)
+        help_menu.add_command(label="数据存储位置...", command=self.on_data_location_click)
+        help_menu.add_command(label="打开数据目录", command=self.on_open_data_dir_click)
         help_menu.add_separator()
         help_menu.add_command(label=f"关于 (v{get_current_version()})", command=self.on_about_click)
         menubar.add_cascade(label="帮助(H)", menu=help_menu, underline=0)
@@ -1299,16 +1303,114 @@ class PackingApp:
     def _on_download_finished(self, ok, msg):
         if ok:
             self._set_update_menu_label("检查更新")
-            messagebox.showinfo("下载完成", f"{msg}\n\n安装器启动后请按向导完成升级。本程序现在可以先关闭。")
+            if messagebox.askyesno(
+                "下载完成",
+                f"{msg}\n\n程序将自动关闭，以释放文件锁让安装器完成升级。\n"
+                "安装向导出现后请点「下一步」完成安装，之后重新打开程序即可。",
+            ):
+                self._quit_app()
         else:
             self._set_update_menu_label("检查更新 (错误)")
             messagebox.showerror("下载失败", msg)
+
+    def _quit_app(self):
+        """升级收尾：主动退出程序，释放主程序 exe 的文件锁。"""
+        tray = getattr(self, "tray", None)
+        if tray is not None:
+            try:
+                tray.stop()
+            except Exception:
+                pass
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
 
     def on_about_click(self):
         messagebox.showinfo(
             "关于",
             f"装箱打印系统\nv{get_current_version()}\n\n设计为 Windows 桌面工具，仅用于内部使用。"
         )
+
+    # ============================================================
+    # 数据存储位置（产品/订单等数据表可整体迁移到其他位置作备份）
+    # ============================================================
+    def on_open_data_dir_click(self):
+        """在文件管理器中打开当前数据目录，方便手动备份。"""
+        path = storage.get_data_dir()
+        try:
+            os.makedirs(path, exist_ok=True)
+            if sys.platform == "win32":
+                os.startfile(path)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                import subprocess
+                subprocess.Popen(["open", path])
+            else:
+                import subprocess
+                subprocess.Popen(["xdg-open", path])
+        except Exception as e:
+            messagebox.showerror("打开数据目录", f"打开失败：{e}")
+
+    def on_data_location_click(self):
+        """设置数据存储位置：可把数据表改存到其他位置（备份盘/同步盘等）。"""
+        win = tk.Toplevel(self.root)
+        win.title("数据存储位置")
+        win.resizable(False, False)
+        win.transient(self.root)
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+
+        ttk.Label(win, text="产品数据、装箱历史、订单历史等数据表当前保存在：").pack(
+            anchor="w", padx=14, pady=(12, 4))
+        loc_var = tk.StringVar(value=storage.get_data_dir())
+        ttk.Entry(win, textvariable=loc_var, width=70, state="readonly").pack(padx=14)
+        ttk.Label(
+            win,
+            text="更改后，现有数据表会自动复制到新位置并从新位置读写；\n"
+                 "原位置文件全部保留，相当于多一份备份。\n"
+                 "更换/重装电脑时，可在此指向原来的数据目录直接接续使用。",
+            wraplength=540, justify="left", foreground="#555555",
+        ).pack(anchor="w", padx=14, pady=(8, 4))
+
+        def _refresh():
+            loc_var.set(storage.get_data_dir())
+
+        def _apply(switch_to):
+            try:
+                old_dir = storage.get_data_dir()
+                storage.set_custom_data_dir(switch_to)
+            except Exception as e:
+                messagebox.showerror("数据存储位置", f"切换失败：{e}", parent=win)
+                return
+            if os.path.abspath(old_dir) != os.path.abspath(storage.get_data_dir()):
+                self._reload_data_after_location_change()
+            _refresh()
+
+        def _change():
+            new_dir = filedialog.askdirectory(
+                title="选择新的数据存储位置", initialdir=storage.get_data_dir(), parent=win)
+            if not new_dir:
+                return
+            _apply(new_dir)
+
+        def _restore():
+            _apply(None)
+
+        btns = ttk.Frame(win)
+        btns.pack(pady=(8, 12))
+        ttk.Button(btns, text="更改位置...", command=_change).pack(side="left", padx=6)
+        ttk.Button(btns, text="恢复默认位置", command=_restore).pack(side="left", padx=6)
+        ttk.Button(btns, text="关闭", command=win.destroy).pack(side="left", padx=6)
+
+    def _reload_data_after_location_change(self):
+        """数据位置切换后：重建产品库并刷新各数据表显示。"""
+        self.store = ProductStore(storage.get_data_dir())
+        self.selected_product_index = None
+        self.refresh_product_table()
+        self.refresh_order_history()
+        self.refresh_history_table()
 
 def _bring_main_window_to_front(root):
     """托盘不可用时的窗口唤起实现（逻辑与 tray.py 保持一致）。"""
@@ -1360,6 +1462,7 @@ def main():
     except Exception as e:
         print(f"[main] 托盘加载失败（不影响主程序）: {e}", file=sys.stderr)
         tray = None
+    app.tray = tray  # 升级下载完成后主动退出时要用到托盘引用
 
     # 二次启动唤起：优先复用托盘的显示实现；托盘加载失败时用本地兜底
     if tray is not None:

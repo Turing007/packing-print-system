@@ -95,6 +95,19 @@ Section "主程序（必需）" SEC_MAIN
   SetShellVarContext current
   SetOutPath "$INSTDIR"
 
+  ; 升级清理：删除旧主程序与历史更新残留的便携包。
+  ; 若程序正在运行导致文件被占用，弹窗提示用户关闭后重试，避免静默装坏。
+retry_delete_exe:
+  ClearErrors
+  Delete "$INSTDIR\${APP_INSTALLED_EXE}"
+  Delete "$INSTDIR\PackingPrint_v*_portable.exe"
+  IfErrors 0 delete_exe_ok
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION \
+      "检测到「${APP_DISPLAY_NAME}」正在运行，无法替换程序文件。$\r$\n$\r$\n请先关闭程序（包括任务栏托盘图标），再点击「重试」继续安装。" \
+      IDRETRY retry_delete_exe
+    Abort
+delete_exe_ok:
+
   ; EXE 主程序（从 ASCII 源文件复制，安装时重命名为中文文件名）
   File "${APP_SOURCE_EXE}"
   Rename "$INSTDIR\${APP_SOURCE_EXE}" "$INSTDIR\${APP_INSTALLED_EXE}"
