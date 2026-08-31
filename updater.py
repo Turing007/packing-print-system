@@ -11,21 +11,24 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import webbrowser
 from dataclasses import dataclass, asdict
 from typing import Callable, Optional
 
 # ========== 配置 ==========
-__CURRENT_VERSION__ = "1.0.1"
+__CURRENT_VERSION__ = "1.0.2"
 GITHUB_OWNER = "Turing007"
 GITHUB_REPO = "packing-print-system"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
@@ -118,15 +121,60 @@ def is_newer(latest: str, current: str) -> bool:
 
 
 # ========== 网络请求 ==========
-def _http_get_json(url: str):
+# 允许请求/下载的主机白名单：release 元数据万一被篡改时，也不允许把请求指到别处
+_ALLOWED_GITHUB_HOSTS = {"api.github.com", "github.com", "objects.githubusercontent.com"}
+# 下载只允许落在系统临时目录内（模块级常量，作为路径校验的信任根）
+_DOWNLOAD_DIR = os.path.abspath(tempfile.gettempdir())
+
+
+def _ensure_github_url(url: str) -> str:
+    """校验 URL 必须是 https 且主机在 GitHub 白名单内，否则拒绝请求。"""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_GITHUB_HOSTS:
+        raise ValueError(f"拒绝请求非 GitHub 白名单地址: {url!r}")
+    return url
+
+
+def _assert_public_host(url: str) -> None:
+    """解析域名并阻断私网/环回/链路本地/保留地址，防 SSRF 与 DNS rebinding。"""
+    host = urllib.parse.urlparse(url).hostname
+    if not host:
+        raise ValueError(f"URL 缺少主机名: {url!r}")
+    for info in socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP):
+        ip = ipaddress.ip_address(info[4][0])
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            raise ValueError(f"主机解析到非公网地址，已阻止: {host} -> {ip}")
+
+
+class _GitHubSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """重定向目标逐跳过白名单与公网 IP 校验。"""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _ensure_github_url(newurl)
+        _assert_public_host(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_GitHubSafeRedirectHandler())
+
+
+def _safe_urlopen(url: str, timeout: float, headers: Optional[dict] = None):
+    """带协议/主机白名单、IP 边界校验与受限重定向的受控请求。"""
+    url = _ensure_github_url(url)
+    _assert_public_host(url)
     req = urllib.request.Request(
         url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "PackingPrintSystem-Updater",
-        },
+        headers=headers or {"User-Agent": "PackingPrintSystem-Updater"},
     )
-    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+    return _OPENER.open(req, timeout=timeout)
+
+
+def _http_get_json(url: str):
+    with _safe_urlopen(url, HTTP_TIMEOUT, headers={
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "PackingPrintSystem-Updater",
+    }) as resp:
         raw = resp.read()
     # GitHub release notes 经常含中文 / emoji，resp.read() 在某些平台返回 latin-1 编码过的 bytes
     # 这里强制按 utf-8 解码，失败回退 latin-1（永远不会真正失败，因为 latin-1 严格兼容 ASCII）
@@ -137,26 +185,39 @@ def _http_get_json(url: str):
 
 
 def _http_download(url: str, dest_path: str, progress_cb: Optional[Callable[[int, int], None]] = None):
-    """带进度回调的文件下载。"""
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "PackingPrintSystem-Updater"},
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        total = int(resp.headers.get("Content-Length") or 0)
-        downloaded = 0
-        with open(dest_path, "wb") as f:
-            while True:
-                chunk = resp.read(64 * 1024)
-                if not chunk:
-                    break
-                f.write(chunk)
-                downloaded += len(chunk)
-                if progress_cb:
-                    try:
-                        progress_cb(downloaded, total)
-                    except Exception:
-                        pass
+    """带进度回调的文件下载。
+
+    先写入临时目录内系统分配的安全临时文件，下载完成后再在同一
+    目录内原子替换为目标文件名，避免路径拼接写坏其他文件。
+    """
+    safe_name = os.path.basename(dest_path) or "download.bin"
+    with _safe_urlopen(url, 60) as resp:
+        fd, tmp_path = tempfile.mkstemp(dir=_DOWNLOAD_DIR, prefix="packingprint_", suffix=".part")
+        try:
+            total = int(resp.headers.get("Content-Length") or 0)
+            downloaded = 0
+            with os.fdopen(fd, "wb") as f:
+                while True:
+                    chunk = resp.read(64 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_cb:
+                        try:
+                            progress_cb(downloaded, total)
+                        except Exception:
+                            pass
+            target = os.path.join(_DOWNLOAD_DIR, safe_name)
+            os.replace(tmp_path, target)
+            return target
+        except Exception:
+            # 下载/写盘失败：清理临时文件
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
 
 
 # ========== 核心：检查更新 ==========
@@ -251,7 +312,9 @@ def download_and_launch_installer(info: UpdateInfo,
     def _worker():
         try:
             tmp_dir = tempfile.gettempdir()
-            target = os.path.join(tmp_dir, info.asset_name or "setup.exe")
+            # asset_name 来自 API 响应，只取基本文件名，防止拼出目录逃逸路径
+            safe_name = os.path.basename(info.asset_name or "setup.exe") or "setup.exe"
+            target = os.path.join(tmp_dir, safe_name)
             _http_download(info.download_url, target, progress_cb=progress_cb)
 
             # 启动安装器

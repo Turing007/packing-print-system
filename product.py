@@ -6,6 +6,7 @@ from typing import Optional
 import json
 import os
 import re
+import tempfile
 
 
 def parse_box_sizes(value) -> list[int]:
@@ -85,8 +86,8 @@ class ProductStore:
     """产品本地存储（JSON文件）"""
 
     def __init__(self, data_dir: str = "data"):
-        self.data_dir = data_dir
-        self.file = os.path.join(data_dir, "products.json")
+        self.data_dir = os.path.abspath(data_dir)
+        self.file = os.path.join(self.data_dir, "products.json")
         self.products: list = []
         self._load()
 
@@ -103,8 +104,19 @@ class ProductStore:
 
     def _save(self):
         os.makedirs(self.data_dir, exist_ok=True)
-        with open(self.file, "w", encoding="utf-8") as f:
-            json.dump([p.to_dict() for p in self.products], f, ensure_ascii=False, indent=2)
+        # 原子写：先写数据目录内系统分配的安全临时文件，再替换正式文件，避免写坏数据
+        fd, tmp_path = tempfile.mkstemp(dir=self.data_dir, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump([p.to_dict() for p in self.products], f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, self.file)
+        except Exception:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            raise
 
     def add(self, product: Product):
         self.products.append(product)

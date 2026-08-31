@@ -587,10 +587,6 @@ def load_label_config(data_dir='data'):
             pass
     return DEFAULT_LABEL_CONFIG
 
-def save_label_config(config, data_dir='data'):
-    os.makedirs(data_dir, exist_ok=True)
-    with open(os.path.join(data_dir, 'label_config.json'), 'w', encoding='utf-8') as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
 _BOX_LABEL_CSS = r"""@page { size: 100mm 100mm; margin: 0; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {

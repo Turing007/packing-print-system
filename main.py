@@ -37,6 +37,7 @@ from datetime import datetime
 from product import Product, ProductStore, format_box_sizes
 from packing import calculate_boxes, generate_box_label_html, generate_individual_box_labels_html, BoxLabel, merge_selected_tail_boxes as merge_tail_boxes
 from storage import save_packing, load_current_packing, clear_current_packing, get_packing_history, delete_history_record, save_print_log, get_combined_history, get_packing_history_by_id, save_order_to_history, load_order_history, delete_order_history, load_order_history_column_widths, save_order_history_column_widths
+import single_instance
 from updater import (
     check_update,
     check_update_async,
@@ -45,6 +46,8 @@ from updater import (
     open_releases_page,
 )
 
+# 打印预览 HTML 的固定输出目录（模块级常量，作为路径校验的信任根）
+_LABELS_DIR = os.path.join(tempfile.gettempdir(), "packing_labels")
 
 ORDER_HISTORY_COLUMN_DEFAULTS = {
     "#0": 28,
@@ -922,11 +925,23 @@ class PackingApp:
 
     def _open_html(self, html, filename):
         try:
-            d = os.path.join(tempfile.gettempdir(), "packing_labels")
-            os.makedirs(d, exist_ok=True)
-            fp = os.path.join(d, filename)
-            with open(fp, "w", encoding="utf-8") as f:
-                f.write(html)
+            os.makedirs(_LABELS_DIR, exist_ok=True)
+            # 先写目录内系统分配的安全临时文件，再在同一目录内原子改名；
+            # 文件名只取基本名，防止路径拼接写坏其他文件
+            safe_name = os.path.basename(filename) or "print.html"
+            fd, tmp_path = tempfile.mkstemp(dir=_LABELS_DIR, prefix="print_", suffix=".html")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(html)
+                fp = os.path.join(_LABELS_DIR, safe_name)
+                os.replace(tmp_path, fp)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+                raise
             webbrowser.open("file://" + fp)
         except Exception as e:
             messagebox.showerror("错误", f"打开浏览器失败: {e}")
@@ -1295,7 +1310,36 @@ class PackingApp:
             f"装箱打印系统\nv{get_current_version()}\n\n设计为 Windows 桌面工具，仅用于内部使用。"
         )
 
+def _bring_main_window_to_front(root):
+    """托盘不可用时的窗口唤起实现（逻辑与 tray.py 保持一致）。"""
+    try:
+        if root.state() == "withdrawn":
+            root.deiconify()
+            if os.name == "nt" and getattr(root, "_tray_was_zoomed", False):
+                try:
+                    root.state("zoomed")
+                except Exception:
+                    pass
+        else:
+            root.deiconify()
+        root.lift()
+        root.focus_force()
+        # 后台进程可能被 Windows 前台锁禁止抢焦点，
+        # 用临时置顶强制把窗口浮到最前，稍后取消置顶
+        root.attributes("-topmost", True)
+        root.after(200, lambda: root.attributes("-topmost", False))
+    except Exception:
+        try:
+            root.deiconify()
+        except Exception:
+            pass
+
+
 def main():
+    # 单实例：已有进程在跑时，唤起它的主窗口并直接退出本进程
+    if single_instance.activate_existing_instance():
+        return
+
     root = tk.Tk()
     root.title("自动装箱打印系统")
     try:
@@ -1316,6 +1360,13 @@ def main():
     except Exception as e:
         print(f"[main] 托盘加载失败（不影响主程序）: {e}", file=sys.stderr)
         tray = None
+
+    # 二次启动唤起：优先复用托盘的显示实现；托盘加载失败时用本地兜底
+    if tray is not None:
+        single_instance.start_listener(root, tray.show_window)
+    else:
+        single_instance.start_listener(
+            root, lambda: root.after(0, _bring_main_window_to_front, root))
 
     root.mainloop()
 

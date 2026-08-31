@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 from datetime import datetime
 from packing import PackingRecord, BoxLabel
 
@@ -86,13 +87,17 @@ def _load_json(filename: str, default=None):
 
 def _save_json(filename: str, data):
     _ensure_dir()
+    # filename 只取基本名，限定写入数据目录，防止拼接出目录逃逸路径
+    filename = os.path.basename(filename)
+    if not filename:
+        raise ValueError("数据文件名不能为空")
     filepath = os.path.join(DATA_DIR, filename)
     # 先滚动备份（写入前的"上一版"才是真正的备份）
     _rotate_backup(filepath)
-    # 原子写入：先写临时文件，再 rename，避免中途崩溃损坏数据
-    tmp = filepath + ".tmp"
+    # 原子写入：先写数据目录内系统分配的安全临时文件，再 rename，避免中途崩溃损坏数据
+    fd, tmp = tempfile.mkstemp(dir=DATA_DIR, suffix=".tmp")
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp, filepath)
     except Exception:

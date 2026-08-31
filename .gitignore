@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.spec.bak
+.mimosa/
 build/
 dist/
 dist_new/

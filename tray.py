@@ -68,11 +68,18 @@ class TrayApp:
     # ---------- 窗口操作（必须在 Tk 主线程执行） ----------
     def _show_window_impl(self):
         try:
-            self.root.deiconify()          # 从任务栏/托盘恢复
-            self.root.state("zoomed" if os.name == "nt" and
-                            self._was_zoomed() else "normal")
+            if self.root.state() == "withdrawn":
+                self.root.deiconify()      # 从托盘恢复
+                if os.name == "nt" and self._was_zoomed():
+                    self.root.state("zoomed")  # 恢复隐藏前的大小状态
+            else:
+                self.root.deiconify()      # 最小化到任务栏时恢复；已显示则为无操作
             self.root.lift()               # 置顶
             self.root.focus_force()
+            # 后台进程可能被 Windows 前台锁禁止抢焦点，
+            # 用临时置顶强制把窗口浮到最前，稍后取消置顶
+            self.root.attributes("-topmost", True)
+            self.root.after(200, lambda: self.root.attributes("-topmost", False))
         except Exception:
             try:
                 self.root.deiconify()
