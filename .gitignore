@@ -5,8 +5,11 @@ __pycache__/
 build/
 dist/
 dist_new/
+release/
 *.egg-info/
 .venv/
 venv/
 *.log
 data/*.tmp
+*.tmp
+nul

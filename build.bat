@@ -1,57 +1,69 @@
 @echo off
-chcp 65001 >nul
-echo ========================================
-echo    装箱打印系统 - EXE 打包工具
-echo ========================================
-echo.
-echo 正在检测 Python 环境...
-call "%~dp0python_cmd.bat"
-if %ERRORLEVEL% NEQ 0 (
-    pause
+REM ============================================================
+REM 一键打包脚本：读版本号 → PyInstaller → NSIS 安装器 → 输出到 release/
+REM 用法：build.bat
+REM ============================================================
+
+setlocal enabledelayedexpansion
+chcp 65001 > nul
+
+cd /d "%~dp0"
+
+REM ---- 1. 读取版本号（从 updater.py 解析，确保单一来源）----
+for /f "tokens=2 delims== delims " %%i in ('findstr /R "__CURRENT_VERSION__" updater.py') do (
+    set "VERSION=%%~i"
+)
+REM 去引号
+set "VERSION=!VERSION:"=!"
+if "!VERSION!"=="" set "VERSION=0.0.0"
+
+echo [1/5] 当前版本：!VERSION!
+
+REM ---- 2. 清理旧的构建产物 ----
+echo [2/5] 清理旧产物...
+if exist build rmdir /s /q build
+if exist dist  rmdir /s /q dist
+if exist release rmdir /s /q release
+del /q PackingPrint_v*.exe 2>nul
+del /q PackingPrintSystem_v*.exe 2>nul
+
+REM ---- 3. 跑 PyInstaller（ASCII 文件名，方便 NSIS 引用）----
+echo [3/5] 调用 PyInstaller 打包 portable EXE...
+python -m PyInstaller --clean --noconfirm build.spec
+if errorlevel 1 (
+    echo [X] PyInstaller 打包失败
     exit /b 1
 )
 
-for %%I in ("%PYTHON_EXE%") do set "PYTHON_HOME=%%~dpI"
+REM ---- 4. 把 portable EXE 复制一份到项目根（NSIS 在脚本目录找源文件）----
+copy /y "dist\PackingPrint_v!VERSION!_portable.exe" "PackingPrint_v!VERSION!_portable.exe" > nul
 
-"%PYTHON_EXE%" --version
-
-echo 正在检测 PyInstaller...
-"%PYTHON_EXE%" -m PyInstaller --version >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo 正在安装 PyInstaller...
-    "%PYTHON_EXE%" -m pip install pyinstaller
+REM ---- 5. 跑 NSIS ----
+echo [5/5] 生成安装器...
+set "MAKENSIS=C:\Program Files (x86)\NSIS\makensis.exe"
+if not exist "!MAKENSIS!" (
+    echo [!] 未找到 NSIS，跳过安装器生成。便携版 EXE 在 dist\
+    goto :done
 )
 
-echo.
-echo 正在打包 EXE（单文件模式）...
-echo.
-
-"%PYTHON_EXE%" -m PyInstaller --onefile --windowed --name "装箱打印系统" ^
-    --add-data "packing_label.css;." ^
-    --add-data "%PYTHON_HOME%tcl\tcl8.6;tcl\tcl8.6" ^
-    --add-data "%PYTHON_HOME%tcl\tk8.6;tcl\tk8.6" ^
-    --hidden-import tkinter ^
-    --hidden-import tkinter.ttk ^
-    --hidden-import tkinter.messagebox ^
-    --hidden-import json ^
-    --hidden-import os ^
-    --hidden-import tempfile ^
-    --hidden-import webbrowser ^
-    --hidden-import datetime ^
-    --hidden-import dataclasses ^
-    --hidden-import typing ^
-    main.py
-
-if %ERRORLEVEL% EQU 0 (
-    echo.
-    echo ======== 打包成功 ========
-    echo 输出文件: dist\装箱打印系统.exe
-    echo.
-    echo 首次运行前，请确保 dist\packing_label.css 文件与 EXE 在同一目录
-    echo ============================
-) else (
-    echo.
-    echo [错误] 打包失败，请检查错误信息
+"!MAKENSIS!" "/DAPP_VERSION=!VERSION!" "installer.nsi"
+if errorlevel 1 (
+    echo [X] NSIS 安装器生成失败
+    exit /b 1
 )
 
-pause
+REM ---- 整理 release/ 目录 ----
+mkdir release
+move /y "PackingPrintSystem_v!VERSION!_setup.exe" "release\" > nul
+move /y "PackingPrint_v!VERSION!_portable.exe" "release\" > nul
+
+:done
+echo.
+echo ============================================================
+echo  打包完成，产物在 release\ 目录：
+dir /b release 2>nul
+echo ============================================================
+echo.
+echo 下一步：把 release\ 下文件拖到 GitHub Release 页面上传即可。
+echo 或运行 release.bat 一键发布。
+endlocal

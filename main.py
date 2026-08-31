@@ -37,6 +37,13 @@ from datetime import datetime
 from product import Product, ProductStore, format_box_sizes
 from packing import calculate_boxes, generate_box_label_html, generate_individual_box_labels_html, BoxLabel, merge_selected_tail_boxes as merge_tail_boxes
 from storage import save_packing, load_current_packing, clear_current_packing, get_packing_history, delete_history_record, save_print_log, get_combined_history, get_packing_history_by_id, save_order_to_history, load_order_history, delete_order_history, load_order_history_column_widths, save_order_history_column_widths
+from updater import (
+    check_update,
+    check_update_async,
+    get_current_version,
+    download_and_launch_installer,
+    open_releases_page,
+)
 
 
 ORDER_HISTORY_COLUMN_DEFAULTS = {
@@ -107,6 +114,10 @@ class PackingApp:
         self.refresh_packing_table()
 
         self.refresh_order_history()
+        # 自动更新：菜单 + 后台静默检测
+        self._update_state = {"pending_info": None, "busy": False}
+        self._build_update_menu()
+        self._kick_off_background_update_check()
     def create_widgets(self):
         main_pane = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         main_pane.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -1190,3 +1201,107 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    # ============================================================
+    # 自动更新（菜单 + 后台检测 + 弹窗）
+    # ============================================================
+    def _build_update_menu(self):
+        """在窗口顶部建一个 tk.Menu，包含帮助 - 检查更新。"""
+        menubar = tk.Menu(self.root)
+        help_menu = tk.Menu(menubar, tearoff=0)
+        self._help_menu = help_menu
+        self._update_menu_label_text = "检查更新"
+        help_menu.add_command(label=self._update_menu_label_text, command=self.on_check_update_click)
+        help_menu.add_command(label="打开发布页", command=open_releases_page)
+        help_menu.add_separator()
+        help_menu.add_command(label=f"关于 (v{get_current_version()})", command=self.on_about_click)
+        menubar.add_cascade(label="帮助(H)", menu=help_menu, underline=0)
+        try:
+            self.root.config(menu=menubar)
+        except Exception:
+            pass
+        self._menubar = menubar
+
+    def _set_update_menu_label(self, text):
+        self._update_menu_label_text = text
+        try:
+            self._help_menu.entryconfigure(0, label=text)
+        except Exception:
+            pass
+
+    def _kick_off_background_update_check(self):
+        """启动后 1.5 秒，在后台静默检测有无新版本。"""
+        import threading
+        def _after_start():
+            def _cb(info):
+                try:
+                    self.root.after(0, lambda: self._on_background_update_done(info))
+                except Exception:
+                    pass
+            check_update_async(_cb)
+        self.root.after(1500, _after_start)
+
+    def _on_background_update_done(self, info):
+        if info.has_update:
+            self._update_state["pending_info"] = info
+            self._set_update_menu_label(f"检查更新 (⚡ v{info.latest_version})")
+        # 出错不通知用户，避免打扰
+
+    def on_check_update_click(self):
+        """菜单点击：同步检查 + 弹窗展示。"""
+        import threading
+        if self._update_state["pending_info"] is not None:
+            self._show_update_dialog(self._update_state["pending_info"])
+            return
+        if self._update_state["busy"]:
+            return
+        self._update_state["busy"] = True
+        self._set_update_menu_label("检查中...")
+        def _worker():
+            info = check_update()
+            self.root.after(0, lambda: self._after_manual_check(info))
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _after_manual_check(self, info):
+        self._update_state["busy"] = False
+        if info.error and not info.has_update:
+            messagebox.showinfo("检查更新", f"未检测到更新：{info.error}")
+            self._set_update_menu_label("检查更新")
+            return
+        self._show_update_dialog(info)
+
+    def _show_update_dialog(self, info):
+        if info.has_update:
+            body = info.release_notes.strip() or "本次发布未提供详情。"
+            size_mb = (info.asset_size / (1024*1024)) if info.asset_size else 0
+            asset = info.asset_name or "—"
+            msg = (
+                f"检测到新版本：v{info.latest_version}\n"
+                f"当前版本：v{info.current_version}\n"
+                f"下载文件：{asset}"
+                + (f" ({size_mb:.2f} MB)" if size_mb else "")
+                + f"\n\n--- 更新说明 ---\n{body[:2000]}"
+            )
+            if messagebox.askyesno("检查更新", msg + "\n\n是否现在下载并安装？"):
+                self._set_update_menu_label("下载中...")
+                def _on_done(ok, m):
+                    self.root.after(0, lambda: self._on_download_finished(ok, m))
+                download_and_launch_installer(info, finished_cb=_on_done)
+            else:
+                self._set_update_menu_label(f"检查更新 (⚡ v{info.latest_version})")
+        else:
+            messagebox.showinfo("检查更新", f"已为最新版本（v{info.current_version}）。")
+
+    def _on_download_finished(self, ok, msg):
+        if ok:
+            self._set_update_menu_label("检查更新")
+            messagebox.showinfo("下载完成", f"{msg}\n\n安装器启动后请按向导完成升级。本程序现在可以先关闭。")
+        else:
+            self._set_update_menu_label("检查更新 (错误)")
+            messagebox.showerror("下载失败", msg)
+
+    def on_about_click(self):
+        messagebox.showinfo(
+            "关于",
+            f"装箱打印系统\nv{get_current_version()}\n\n设计为 Windows 桌面工具，仅用于内部使用。"
+        )

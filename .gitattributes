@@ -1,0 +1,10 @@
+# 自动保留 LF（Unix 风格），避免 Windows 下不同工具改换行
+* text=auto eol=lf
+
+# 批处理脚本 / Windows 脚本必须 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# NSIS 脚本需要 UTF-8 BOM，保留二进制不被 Git 改
+*.nsi text working-tree-encoding=UTF-8
