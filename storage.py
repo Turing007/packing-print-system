@@ -23,25 +23,27 @@ def _resolve_data_dir() -> str:
     return data_dir
 
 
-# 自定义数据存储位置：标记文件固定放在默认数据目录里，记录用户选择的数据目录
-LOCATION_MARKER_FILE = "data_location.json"
+# 自动备份目录：标记文件固定放在默认数据目录里，记录用户选择的备份文件夹。
+# 设置后，数据表每次保存改动都会自动把最新文件复制一份到备份目录；
+# 数据本身仍保存在原位置（DATA_DIR）不变。
+BACKUP_MARKER_FILE = "backup_location.json"
 
 
-def _apply_location_marker() -> str:
-    """启动时读标记：用户设置过自定义数据目录（且目录存在）则使用之。"""
-    default = _resolve_data_dir()
+def _apply_backup_marker() -> str:
+    """启动时读标记：用户设置过备份目录（且目录存在）则启用自动备份。"""
     try:
-        with open(os.path.join(default, LOCATION_MARKER_FILE), "r", encoding="utf-8") as f:
+        with open(os.path.join(_resolve_data_dir(), BACKUP_MARKER_FILE), "r", encoding="utf-8") as f:
             data = json.load(f)
-        custom = str(data.get("data_dir", "")).strip()
-        if custom and os.path.isdir(custom):
-            return os.path.abspath(custom)
+        backup_dir = str(data.get("backup_dir", "")).strip()
+        if backup_dir and os.path.isdir(backup_dir):
+            return os.path.abspath(backup_dir)
     except Exception:
         pass
-    return default
+    return ""
 
 
-DATA_DIR = _apply_location_marker()
+DATA_DIR = _resolve_data_dir()
+_BACKUP_DIR = _apply_backup_marker()
 
 # 自动备份：每次保存保留最近 5 份历史（products.json.bak 是最新，.bak.4 最旧）
 MAX_BACKUPS = 5
@@ -54,51 +56,39 @@ def get_data_dir() -> str:
     return DATA_DIR
 
 
-def get_default_data_dir() -> str:
-    """默认数据目录（EXE/源码同级下的 data），位置标记文件也固定放这里。"""
-    return _resolve_data_dir()
+def get_backup_dir() -> str:
+    """当前设置的自动备份目录；未设置返回空串。"""
+    return _BACKUP_DIR
 
 
-def set_custom_data_dir(path) -> str:
-    """切换数据存储位置：产品/订单等所有数据表整体迁移。
+def set_backup_dir(path) -> str:
+    """设置自动备份目录；path 为 None 或空串表示停用自动备份。
 
-    - 当前数据目录下的 .json 数据表（含滚动备份）复制到新位置；旧目录文件全部保留作备份；
-    - 在默认数据目录写标记文件，下次启动自动使用新位置；path 为 None/空串表示恢复默认；
-    - 目录不可写等情况直接抛异常，不部分生效。
-    返回切换后生效的数据目录。
+    - 数据仍保存在原位置不变；此后每次数据表保存改动都会自动复制到备份目录；
+    - 备份目录自动创建并做可写性探测；标记写在默认数据目录里，重启后仍生效；
+    - 备份目录不能与数据目录相同；目录不可写等情况直接抛异常，不部分生效。
+    返回设置后的备份目录（停用时返回空串）。
     """
-    global DATA_DIR
+    global _BACKUP_DIR
     default_dir = _resolve_data_dir()
     if path is None or not str(path).strip():
-        new_dir = default_dir
+        new_dir = ""
     else:
         new_dir = os.path.abspath(str(path).strip())
-    if os.path.abspath(DATA_DIR) == os.path.abspath(new_dir):
-        return DATA_DIR
+        if os.path.abspath(new_dir) == os.path.abspath(DATA_DIR):
+            raise ValueError("备份目录不能与数据目录相同")
+        os.makedirs(new_dir, exist_ok=True)
+        # 可写性探测：建/删一个临时子目录（失败即抛错，避免切到不可写位置后备份悄悄失效）
+        probe_dir = os.path.join(new_dir, ".write_probe")
+        os.makedirs(probe_dir, exist_ok=True)
+        os.rmdir(probe_dir)
 
-    os.makedirs(new_dir, exist_ok=True)
-    # 可写性探测：建/删一个临时子目录（失败即抛错，避免切到不可写位置后丢数据）
-    probe_dir = os.path.join(new_dir, ".write_probe")
-    os.makedirs(probe_dir, exist_ok=True)
-    os.rmdir(probe_dir)
-
-    # 复制现有数据表到新位置
-    if os.path.isdir(DATA_DIR):
-        for name in os.listdir(DATA_DIR):
-            if not name.lower().endswith(".json") or name == LOCATION_MARKER_FILE:
-                continue
-            src = os.path.join(DATA_DIR, name)
-            if os.path.isfile(src):
-                shutil.copy2(src, os.path.join(new_dir, name))
-
-    # 在默认数据目录写位置标记（安全临时文件 + 原子替换）
     os.makedirs(default_dir, exist_ok=True)
-    payload = {"data_dir": "" if os.path.abspath(new_dir) == os.path.abspath(default_dir) else new_dir}
-    fd, tmp_path = tempfile.mkstemp(dir=default_dir, prefix="location_", suffix=".tmp")
+    fd, tmp_path = tempfile.mkstemp(dir=default_dir, prefix="backup_", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, os.path.join(default_dir, LOCATION_MARKER_FILE))
+            json.dump({"backup_dir": new_dir}, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, os.path.join(default_dir, BACKUP_MARKER_FILE))
     except Exception:
         if os.path.exists(tmp_path):
             try:
@@ -107,8 +97,40 @@ def set_custom_data_dir(path) -> str:
                 pass
         raise
 
-    DATA_DIR = new_dir
-    return DATA_DIR
+    _BACKUP_DIR = new_dir
+    return _BACKUP_DIR
+
+
+def backup_file(filename: str) -> bool:
+    """把当前数据目录中的单个数据表复制一份到备份目录。
+
+    未设置备份目录、文件不存在时忽略；备份失败只写日志，不影响正常保存。
+    """
+    filename = os.path.basename(filename)
+    if not _BACKUP_DIR or not filename.lower().endswith(".json") or filename == BACKUP_MARKER_FILE:
+        return False
+    src = os.path.join(DATA_DIR, filename)
+    if not os.path.isfile(src):
+        return False
+    try:
+        os.makedirs(_BACKUP_DIR, exist_ok=True)
+        shutil.copy2(src, os.path.join(_BACKUP_DIR, filename))
+        return True
+    except Exception as e:
+        print(f"[storage] 自动备份失败（{filename}）: {e}", file=sys.stderr)
+        return False
+
+
+def backup_all() -> int:
+    """把当前数据目录下所有数据表立即备份到备份目录，返回备份的文件数。"""
+    if not _BACKUP_DIR:
+        raise ValueError("尚未设置自动备份目录")
+    count = 0
+    if os.path.isdir(DATA_DIR):
+        for name in os.listdir(DATA_DIR):
+            if backup_file(name):
+                count += 1
+    return count
 
 
 def _ensure_dir():
@@ -180,6 +202,8 @@ def _save_json(filename: str, data):
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp, filepath)
+        # 自动备份：数据表有改动时同步一份到用户设置的备份目录（失败不影响保存）
+        backup_file(filename)
     except Exception:
         # 写入失败也要清理临时文件
         if os.path.exists(tmp):

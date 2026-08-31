@@ -118,6 +118,9 @@ class ProductStore:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump([p.to_dict() for p in self.products], f, ensure_ascii=False, indent=2)
             os.replace(tmp_path, self.file)
+            # 自动备份：产品数据有改动时同步一份到用户设置的备份目录（失败不影响保存）
+            import storage
+            storage.backup_file("products.json")
         except Exception:
             if os.path.exists(tmp_path):
                 try:

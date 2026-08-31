@@ -1219,7 +1219,7 @@ class PackingApp:
         self._update_menu_label_text = "检查更新"
         help_menu.add_command(label=self._update_menu_label_text, command=self.on_check_update_click)
         help_menu.add_command(label="打开发布页", command=open_releases_page)
-        help_menu.add_command(label="数据存储位置...", command=self.on_data_location_click)
+        help_menu.add_command(label="自动备份设置...", command=self.on_backup_settings_click)
         help_menu.add_command(label="打开数据目录", command=self.on_open_data_dir_click)
         help_menu.add_separator()
         help_menu.add_command(label=f"关于 (v{get_current_version()})", command=self.on_about_click)
@@ -1333,7 +1333,7 @@ class PackingApp:
         )
 
     # ============================================================
-    # 数据存储位置（产品/订单等数据表可整体迁移到其他位置作备份）
+    # 数据目录与自动备份
     # ============================================================
     def on_open_data_dir_click(self):
         """在文件管理器中打开当前数据目录，方便手动备份。"""
@@ -1351,10 +1351,9 @@ class PackingApp:
         except Exception as e:
             messagebox.showerror("打开数据目录", f"打开失败：{e}")
 
-    def on_data_location_click(self):
-        """设置数据存储位置：可把数据表改存到其他位置（备份盘/同步盘等）。"""
+    def on_backup_settings_click(self):
         win = tk.Toplevel(self.root)
-        win.title("数据存储位置")
+        win.title("自动备份设置")
         win.resizable(False, False)
         win.transient(self.root)
         try:
@@ -1362,55 +1361,91 @@ class PackingApp:
         except Exception:
             pass
 
-        ttk.Label(win, text="产品数据、装箱历史、订单历史等数据表当前保存在：").pack(
-            anchor="w", padx=14, pady=(12, 4))
-        loc_var = tk.StringVar(value=storage.get_data_dir())
-        ttk.Entry(win, textvariable=loc_var, width=70, state="readonly").pack(padx=14)
+        status_var = tk.StringVar()
+
+        def _refresh():
+            backup_dir = storage.get_backup_dir()
+            status_var.set(backup_dir if backup_dir else "未设置（数据只保存在数据目录，不做自动备份）")
+
+        ttk.Label(win, text="备份文件夹：").pack(anchor="w", padx=14, pady=(12, 4))
+        ttk.Entry(win, textvariable=status_var, width=70, state="readonly").pack(padx=14)
         ttk.Label(
             win,
-            text="更改后，现有数据表会自动复制到新位置并从新位置读写；\n"
-                 "原位置文件全部保留，相当于多一份备份。\n"
-                 "更换/重装电脑时，可在此指向原来的数据目录直接接续使用。",
+            text="数据本身仍按原位置保存，位置不变。\n"
+                 "设置后，产品数据、装箱历史、订单历史等数据表每次有改动，\n"
+                 "都会自动把最新文件复制一份到备份文件夹。\n"
+                 "建议选择另一块磁盘或云盘同步文件夹作为备份位置。",
             wraplength=540, justify="left", foreground="#555555",
         ).pack(anchor="w", padx=14, pady=(8, 4))
 
-        def _refresh():
-            loc_var.set(storage.get_data_dir())
-
-        def _apply(switch_to):
-            try:
-                old_dir = storage.get_data_dir()
-                storage.set_custom_data_dir(switch_to)
-            except Exception as e:
-                messagebox.showerror("数据存储位置", f"切换失败：{e}", parent=win)
-                return
-            if os.path.abspath(old_dir) != os.path.abspath(storage.get_data_dir()):
-                self._reload_data_after_location_change()
-            _refresh()
-
         def _change():
             new_dir = filedialog.askdirectory(
-                title="选择新的数据存储位置", initialdir=storage.get_data_dir(), parent=win)
+                title="选择备份文件夹",
+                initialdir=storage.get_backup_dir() or storage.get_data_dir(),
+                parent=win)
             if not new_dir:
                 return
-            _apply(new_dir)
+            try:
+                storage.set_backup_dir(new_dir)
+            except Exception as e:
+                messagebox.showerror("自动备份设置", f"设置失败：{e}", parent=win)
+                return
+            _refresh()
+            messagebox.showinfo(
+                "自动备份设置",
+                f"自动备份已开启。\n之后数据表每次改动都会自动备份到：\n{storage.get_backup_dir()}",
+                parent=win)
 
-        def _restore():
-            _apply(None)
+        def _backup_now():
+            if not storage.get_backup_dir():
+                messagebox.showinfo("自动备份设置", "请先选择备份文件夹。", parent=win)
+                return
+            try:
+                count = storage.backup_all()
+            except Exception as e:
+                messagebox.showerror("自动备份设置", f"备份失败：{e}", parent=win)
+                return
+            messagebox.showinfo("自动备份设置", f"已把 {count} 个数据表备份到备份文件夹。", parent=win)
 
-        btns = ttk.Frame(win)
-        btns.pack(pady=(8, 12))
-        ttk.Button(btns, text="更改位置...", command=_change).pack(side="left", padx=6)
-        ttk.Button(btns, text="恢复默认位置", command=_restore).pack(side="left", padx=6)
-        ttk.Button(btns, text="关闭", command=win.destroy).pack(side="left", padx=6)
+        def _open_backup():
+            backup_dir = storage.get_backup_dir()
+            if not backup_dir:
+                messagebox.showinfo("自动备份设置", "尚未设置备份文件夹。", parent=win)
+                return
+            try:
+                if sys.platform == "win32":
+                    os.startfile(backup_dir)  # type: ignore[attr-defined]
+                elif sys.platform == "darwin":
+                    import subprocess
+                    subprocess.Popen(["open", backup_dir])
+                else:
+                    import subprocess
+                    subprocess.Popen(["xdg-open", backup_dir])
+            except Exception as e:
+                messagebox.showerror("自动备份设置", f"打开失败：{e}", parent=win)
 
-    def _reload_data_after_location_change(self):
-        """数据位置切换后：重建产品库并刷新各数据表显示。"""
-        self.store = ProductStore(storage.get_data_dir())
-        self.selected_product_index = None
-        self.refresh_product_table()
-        self.refresh_order_history()
-        self.refresh_history_table()
+        def _disable():
+            if not messagebox.askyesno(
+                    "自动备份设置", "确定停用自动备份吗？\n已备份到备份文件夹的文件会保留。", parent=win):
+                return
+            try:
+                storage.set_backup_dir(None)
+            except Exception as e:
+                messagebox.showerror("自动备份设置", f"操作失败：{e}", parent=win)
+                return
+            _refresh()
+
+        btns1 = ttk.Frame(win)
+        btns1.pack(pady=(8, 0))
+        ttk.Button(btns1, text="选择备份文件夹...", command=_change).pack(side="left", padx=6)
+        ttk.Button(btns1, text="立即备份全部", command=_backup_now).pack(side="left", padx=6)
+        btns2 = ttk.Frame(win)
+        btns2.pack(pady=(6, 12))
+        ttk.Button(btns2, text="打开备份文件夹", command=_open_backup).pack(side="left", padx=6)
+        ttk.Button(btns2, text="停用自动备份", command=_disable).pack(side="left", padx=6)
+        ttk.Button(btns2, text="关闭", command=win.destroy).pack(side="left", padx=6)
+
+        _refresh()
 
 def _bring_main_window_to_front(root):
     """托盘不可用时的窗口唤起实现（逻辑与 tray.py 保持一致）。"""
