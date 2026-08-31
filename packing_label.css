@@ -1,0 +1,55 @@
+@page { size: A4; margin: 8mm; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif;
+    background: #f5f5f5;
+    padding: 5px;
+}
+.page {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-width: 210mm;
+    margin: 0 auto;
+    background: #fff;
+    padding: 8px;
+}
+.label {
+    flex: 0 0 calc(50% - 4px);
+    border: 2px solid #222;
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    break-inside: avoid;
+    font-size: 10px;
+}
+.label.tail { border-color: #e67e22; border-style: dashed; }
+.l-header {
+    display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 2px solid #222; padding-bottom: 3px; margin-bottom: 4px;
+}
+.l-title { font-size: 14px; font-weight: bold; letter-spacing: 3px; }
+.l-tail-badge { font-size: 9px; background: #e67e22; color: #fff; padding: 1px 6px; border-radius: 2px; }
+.l-row { display: flex; margin-bottom: 2px; }
+.l-label { color: #555; width: 60px; flex-shrink: 0; font-size: 9px; }
+.l-value { font-weight: bold; font-size: 11px; }
+.l-box-no { font-size: 18px; font-weight: bold; color: #1a5276; text-align: center; margin: 4px 0; }
+.l-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+.l-table th { background: #eee; font-size: 9px; padding: 2px 4px; border: 1px solid #999; text-align: center; }
+.l-table td { font-size: 10px; padding: 2px 4px; border: 1px solid #999; text-align: center; }
+.l-table .qty { color: #c0392b; font-weight: bold; font-size: 12px; }
+.l-footer { border-top: 1px solid #ddd; padding-top: 2px; margin-top: 3px; font-size: 8px; color: #888; text-align: right; }
+@media print {
+    body { background: #fff; padding: 0; }
+    .page { padding: 0; gap: 3px; }
+    .label { border: 1.5px solid #000; }
+}
+.packing-list { max-width: 210mm; margin: 0 auto; background: #fff; padding: 10px; }
+.packing-list h2 { text-align: center; margin-bottom: 10px; font-size: 16px; }
+.packing-list .recipient-group { margin-bottom: 15px; border: 1px solid #ccc; padding: 8px; border-radius: 3px; }
+.packing-list .recipient-group h3 { margin-bottom: 5px; color: #1a5276; font-size: 13px; }
+.packing-list table { width: 100%; border-collapse: collapse; }
+.packing-list th { background: #f0f0f0; font-size: 10px; padding: 4px 6px; border: 1px solid #999; text-align: center; }
+.packing-list td { font-size: 10px; padding: 3px 6px; border: 1px solid #999; text-align: center; }
+.packing-list .total-row { font-weight: bold; background: #fafafa; }
