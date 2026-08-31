@@ -13,3 +13,7 @@ venv/
 data/*.tmp
 *.tmp
 nul
+icon_*.png
+icon_preview.png
+icon_sizes.png
+icon_small_sizes.png

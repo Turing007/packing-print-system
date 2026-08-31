@@ -57,8 +57,8 @@ git push origin "v!NEW!"
 
 REM 在 GitHub 创建 Release 并上传资产
 gh release create "v!NEW!" ^
-  "release\装箱打印系统_!NEW!_setup.exe" ^
-  "release\装箱打印系统_!NEW!_portable.exe" ^
+  "release\PackingPrintSystem_v!NEW!_setup.exe" ^
+  "release\PackingPrint_v!NEW!_portable.exe" ^
   --title "装箱打印系统 v!NEW!" ^
   --generate-notes
 

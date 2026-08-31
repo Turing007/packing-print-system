@@ -30,14 +30,26 @@ Unicode true
 !define APP_SETUP_OUT "PackingPrintSystem_v${APP_VERSION}_setup.exe"
 
 InstallDir "$LOCALAPPDATA\${APP_DISPLAY_NAME}"
+; 备用方案：一些 Windows 容器/沙箱下 $LOCALAPPDATA 解析异常（被重定向到 D: 盘），
+; 用户可改用下面这行把装到用户家目录的固定位置：
+; InstallDir "$DOCUMENTS\${APP_DISPLAY_NAME}"
 InstallDirRegKey HKCU "Software\${APP_NAME_ASCII}" ""
+
+; 在 .onInit 里通过 Win32 API 强制解析当前用户的 LocalAppData，
+; 避免 $LOCALAPPDATA 在沙箱/容器环境下被改写到 D:\ 等异常位置
+Function .onInit
+  ; CSIDL_LOCAL_APPDATA = 28
+  SetShellVarContext current
+  System::Call 'Shell32::SHGetFolderPath(i $0, i 28, i 0, i 0, t .r1)'
+  StrCpy $INSTDIR "$1\${APP_DISPLAY_NAME}"
+FunctionEnd
 
 RequestExecutionLevel user
 
 ; ---------------- 现代 UI ----------------
 !define MUI_ABORTWARNING
-!define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
-!define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
+!define MUI_ICON "icon.ico"
+!define MUI_UNICON "icon.ico"
 
 !define MUI_WELCOMEPAGE_TITLE "${APP_DISPLAY_NAME} 安装向导"
 !define MUI_WELCOMEPAGE_TEXT "本安装程序将引导您完成 ${APP_DISPLAY_NAME} 的安装。$\r$\n$\r$\n版本：${APP_VERSION}$\r$\n$\r$\n点击下一步继续。"
@@ -79,6 +91,8 @@ BrandingText "${APP_DISPLAY_NAME} ${APP_VERSION}"
 Section "主程序（必需）" SEC_MAIN
   SectionIn RO
 
+  ; 强制使用当前用户的 shell 变量（避免 admin 提升后 $LOCALAPPDATA 指向 system）
+  SetShellVarContext current
   SetOutPath "$INSTDIR"
 
   ; EXE 主程序（从 ASCII 源文件复制，安装时重命名为中文文件名）
@@ -115,6 +129,8 @@ SectionEnd
 
 ; ---------------- 卸载节 ----------------
 Section "Uninstall"
+  SetShellVarContext current
+
   ; 删文件
   Delete "$INSTDIR\${APP_INSTALLED_EXE}"
   Delete "$INSTDIR\packing_label.css"
