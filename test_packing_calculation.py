@@ -23,7 +23,21 @@ class MultiBoxSizeCalculationTest(unittest.TestCase):
         ], merge_tail=False)
 
         self.assertEqual(len(boxes), 3)
-        self.assertEqual([box.quantity_in_box for box in boxes], [20, 15, 10])
+        self.assertEqual([box.quantity_in_box for box in boxes], [15, 15, 15])
+        self.assertTrue(all(not box.is_tail for box in boxes))
+
+    def test_exact_plans_prefer_even_distribution(self):
+        # 同箱数下选各箱装量最均衡的组合：30 → 15+15（而不是 20+10），50 → 20+15+15（而不是 20+20+10）
+        boxes = calculate_boxes([
+            Product(name="棘轮扳手", sku="RATCHET", quantity=30, qty_per_box="10,15,20", recipient="R", order_no="O")
+        ], merge_tail=False)
+        self.assertEqual([box.quantity_in_box for box in boxes], [15, 15])
+        self.assertTrue(all(not box.is_tail for box in boxes))
+
+        boxes = calculate_boxes([
+            Product(name="棘轮扳手", sku="RATCHET", quantity=50, qty_per_box="10,15,20", recipient="R", order_no="O")
+        ], merge_tail=False)
+        self.assertEqual([box.quantity_in_box for box in boxes], [20, 15, 15])
         self.assertTrue(all(not box.is_tail for box in boxes))
 
     def test_box_size_parser_accepts_legacy_and_chinese_separators(self):

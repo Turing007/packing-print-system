@@ -7,6 +7,7 @@ import json
 import os
 from html import escape
 from datetime import datetime
+from math import gcd
 from product import Product, parse_box_sizes
 
 
@@ -69,6 +70,64 @@ class PackingRecord:
     def from_json(cls, json_str: str) -> "PackingRecord":
         return cls.from_dict(json.loads(json_str))
 
+_MAX_BALANCED_DFS_NODES = 300000
+
+
+def _balanced_fill_plan(quantity: int, sizes, box_count: int):
+    """在"恰好 box_count 个标准箱装满 quantity"的所有组合中，返回各箱装量最均衡
+    （极差最小）的一种，箱装量按从大到小排列；找不到或搜索过于复杂时返回 None。
+
+    例：sizes=10/15/20 时 30 → [15, 15]（而不是 20+10），50 → [20, 15, 15]（而不是 20+20+10）。
+    """
+    if box_count <= 0:
+        return None
+    sizes_desc = sorted(set(sizes), reverse=True)
+    min_size, max_size = sizes_desc[-1], sizes_desc[0]
+    common = 0
+    for size in sizes_desc:
+        common = gcd(common, size)
+    if common == 0 or quantity % common:
+        return None
+    if not (min_size * box_count <= quantity <= max_size * box_count):
+        return None
+
+    best_spread = None
+    best_plan = None
+    chosen = []   # 保持非升序：chosen[0] 为当前最大，chosen[-1] 为当前最小
+    nodes = 0
+
+    def dfs(remaining, boxes_left, start_idx):
+        nonlocal best_spread, best_plan, nodes
+        nodes += 1
+        if nodes > _MAX_BALANCED_DFS_NODES:
+            return
+        if boxes_left == 0:
+            if remaining == 0:
+                spread = chosen[0] - chosen[-1]
+                if best_spread is None or spread < best_spread:
+                    best_spread, best_plan = spread, list(chosen)
+            return
+        if remaining < min_size * boxes_left or remaining > max_size * boxes_left:
+            return
+        if remaining % common:
+            return
+        if chosen and best_spread is not None and chosen[0] - chosen[-1] >= best_spread:
+            return  # 前缀极差已不优于当前最优（极差只会随装箱变大），剪枝
+
+        for idx in range(start_idx, len(sizes_desc)):
+            size = sizes_desc[idx]
+            if size > remaining - min_size * (boxes_left - 1):
+                continue  # 选它会让剩余件数装不下；更小的箱还有机会
+            if size * boxes_left < remaining:
+                break     # 当前及更小的箱都凑不满剩余件数
+            chosen.append(size)
+            dfs(remaining - size, boxes_left - 1, idx)
+            chosen.pop()
+
+    dfs(quantity, box_count, 0)
+    return best_plan
+
+
 def _packing_plan(quantity: int, box_sizes) -> list[tuple[int, int, bool]]:
     """Find the fewest boxes, preferring the fullest standard-box plan."""
     if quantity <= 0:
@@ -110,6 +169,10 @@ def _packing_plan(quantity: int, box_sizes) -> list[tuple[int, int, bool]]:
 
         if candidates:
             full_total, chosen, tail_quantity = max(candidates, key=lambda item: item[0])
+            # 箱数最少的前提下，同箱数选各箱装量最均衡的组合（30 → 15+15，50 → 20+15+15）
+            balanced = _balanced_fill_plan(full_total, sizes, len(chosen))
+            if balanced:
+                chosen = balanced
             plan = [(size, size, False) for size in chosen]
             if tail_quantity:
                 plan.append((tail_quantity, max_size, True))
