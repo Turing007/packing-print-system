@@ -536,6 +536,23 @@ class PackingApp:
                         self.l_selected_product.config(text=f"{prod.name}\nSKU:{prod.sku} | 规格:{prod.spec} | 装箱数:{format_box_sizes(prod.qty_per_box)}", foreground="#1a5276")
                         break
 
+    def _find_duplicate_packing_items(self, item):
+        """在当前装箱列表里找出与 item 重复的产品。
+
+        判断规则：先按 SKU——SKU 相同即视为同一产品；
+        SKU 不同时再按品名+规格综合判断，两者完全相同也视为同一产品。
+        返回重复项的 (行号, 已有项) 列表（行号从 1 开始，与界面一致）。
+        """
+        duplicates = []
+        for idx, existing in enumerate(self.packing_items):
+            sku_a, sku_b = existing.get("sku", ""), item.get("sku", "")
+            same_sku = bool(sku_a) and sku_a == sku_b  # 两边 SKU 都为空不算"SKU 相同"
+            same_name_spec = (existing.get("name", "") == item.get("name", "")
+                              and existing.get("spec", "") == item.get("spec", ""))
+            if same_sku or same_name_spec:
+                duplicates.append((idx + 1, existing))
+        return duplicates
+
     def add_packing_item(self):
         if self.selected_prod_for_packing is None:
             messagebox.showwarning("提示","请先在左侧产品列表中选择一个产品")
@@ -559,6 +576,21 @@ class PackingApp:
             "recipient": recipient, "order": order, "qty": qty,
             "remark": self.e_pk_remark.get().strip()
         }
+
+        # 重复检查：SKU 相同，或品名+规格完全相同（SKU 不同）都视为同一产品
+        duplicates = self._find_duplicate_packing_items(item)
+        if duplicates:
+            dup_lines = "\n".join(
+                f"第{row}行：{ex.get('name','')}（SKU:{ex.get('sku','') or '无'}，规格:{ex.get('spec','') or '无'}），"
+                f"收件人:{ex.get('recipient','') or '无'} 订单:{ex.get('order','') or '无'}，数量:{ex.get('qty','')}"
+                for row, ex in duplicates)
+            if not messagebox.askyesno(
+                    "发现重复产品",
+                    f"「{item['name']}（SKU:{item['sku'] or '无'}，规格:{item['spec'] or '无'}）」可能与已有装箱项重复：\n\n"
+                    f"{dup_lines}\n\n仍要确认添加这条重复产品吗？"):
+                self.e_pk_qty.delete(0, tk.END)
+                return
+
         self.packing_items.append(item)
         self.refresh_packing_table()
         # 只清空数量，收件人和订单保留
