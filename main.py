@@ -436,6 +436,8 @@ class PackingApp:
             self.ptree.delete(i)
         kw = self.search_var.get().strip()
         results = self.store.search_by_name_or_sku_with_index(kw)
+        # 产品列表按品名排序（不改动存储顺序，行 iid 仍指向原始索引，编辑/删除不受影响）
+        results = sorted(results, key=lambda item: (item[1].name.lower(), item[1].name, item[1].sku))
         for i, p in results:
             self.ptree.insert("",tk.END,iid=str(i),values=(p.name,p.sku,p.spec,format_box_sizes(p.qty_per_box)))
         # 产品列表已更新
