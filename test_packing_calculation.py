@@ -1,6 +1,6 @@
 import unittest
 
-from packing import calculate_boxes, merge_selected_tail_boxes
+from packing import calculate_boxes, merge_selected_boxes
 from product import Product, format_box_sizes, parse_box_sizes
 
 
@@ -128,7 +128,7 @@ class TailMergeCalculationTest(unittest.TestCase):
         boxes = calculate_boxes(products, merge_tail=False)
         selected = [i for i, box in enumerate(boxes) if box.is_tail]
 
-        merged = merge_selected_tail_boxes(boxes, selected)
+        merged = merge_selected_boxes(boxes, selected)
         tail_boxes = [box for box in merged if box.is_tail]
         manual_box = next(box for box in tail_boxes if box.remark == "手动合箱")
 
@@ -143,18 +143,42 @@ class TailMergeCalculationTest(unittest.TestCase):
         ])
         self.assertEqual([box.box_number for box in merged], list(range(1, len(merged) + 1)))
 
-    def test_manual_tail_merge_rejects_full_boxes_or_different_orders(self):
+    def test_full_and_tail_boxes_can_be_merged(self):
+        """整箱也能和尾数箱一起合箱：内容合并为一个箱子，装箱数=实际件数。"""
+        boxes = calculate_boxes([
+            Product(name="代送变器", sku="A", quantity=55, qty_per_box=50, spec="MT", recipient="陶晴", order_no="501", remark="A备注"),
+            Product(name="热熔胶枪", sku="B", quantity=35, qty_per_box=20, spec="MT", recipient="陶晴", order_no="501", remark="B备注"),
+        ], merge_tail=False)
+        # A: 50整 + 5尾，B: 20整 + 15尾 → 共 4 箱
+        self.assertEqual(len(boxes), 4)
+
+        selected = [i for i, box in enumerate(boxes) if box.is_tail]
+        selected.append(next(i for i, box in enumerate(boxes) if box.product_sku == "B" and not box.is_tail))
+        self.assertEqual(len(selected), 3)
+
+        merged = merge_selected_boxes(boxes, selected)
+        # 3 箱合成 1 箱：只剩 A 的整箱 + 合并箱
+        self.assertEqual(len(merged), 2)
+        manual_box = next(box for box in merged if box.remark == "手动合箱")
+        self.assertEqual(manual_box.quantity_in_box, 40)
+        self.assertEqual(manual_box.product_name, "代送变器(5)+热熔胶枪(35)")
+        items = {item["sku"]: item["quantity_in_box"] for item in manual_box.tail_items}
+        self.assertEqual(items, {"A": 5, "B": 35})
+        # 未选中的 A 整箱保持不变
+        full_a = next(box for box in merged if box.product_sku == "A" and not box.is_tail)
+        self.assertEqual((full_a.quantity_in_box, full_a.qty_per_box), (50, 50))
+        self.assertEqual([box.box_number for box in merged], [1, 2])
+
+    def test_manual_merge_rejects_different_orders(self):
         boxes = calculate_boxes([
             Product(name="A", sku="A", quantity=55, qty_per_box=50, recipient="R", order_no="O1"),
             Product(name="B", sku="B", quantity=25, qty_per_box=20, recipient="R", order_no="O2"),
         ], merge_tail=False)
-        full_index = next(i for i, box in enumerate(boxes) if not box.is_tail)
-        tail_indexes = [i for i, box in enumerate(boxes) if box.is_tail]
+        tail_a = next(i for i, box in enumerate(boxes) if box.is_tail and box.order_no == "O1")
+        tail_b = next(i for i, box in enumerate(boxes) if box.is_tail and box.order_no == "O2")
 
-        with self.assertRaisesRegex(ValueError, "只能合并尾数箱"):
-            merge_selected_tail_boxes(boxes, [full_index, tail_indexes[0]])
         with self.assertRaisesRegex(ValueError, "同一个收件人和订单号"):
-            merge_selected_tail_boxes(boxes, tail_indexes)
+            merge_selected_boxes(boxes, [tail_a, tail_b])
 
     def test_manual_tail_merge_recalculates_totals_per_order(self):
         boxes = calculate_boxes([
@@ -167,7 +191,7 @@ class TailMergeCalculationTest(unittest.TestCase):
             if box.is_tail and box.order_no == "O1"
         ]
 
-        merged = merge_selected_tail_boxes(boxes, selected)
+        merged = merge_selected_boxes(boxes, selected)
         by_order = {}
         for box in merged:
             by_order.setdefault(box.order_no, []).append(box)

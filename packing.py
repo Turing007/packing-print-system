@@ -369,21 +369,23 @@ def _build_tail_items(parts, order_totals: dict) -> list:
     return items
 
 
-def merge_selected_tail_boxes(boxes: list[BoxLabel], selected_indexes: list[int]) -> list[BoxLabel]:
-    """手动合并选中的尾数箱。"""
+def merge_selected_boxes(boxes: list[BoxLabel], selected_indexes: list[int]) -> list[BoxLabel]:
+    """手动合箱：把选中的箱子（整箱、尾数箱均可）内容合并成一个箱子。
+
+    - 只能合并同一个收件人和订单号的箱子，且至少选择两个；
+    - 合并后的箱子装箱数=实际件数（可能超过标准装箱数），
+      类型为尾数箱、备注"手动合箱"。
+    """
     indexes = sorted(set(int(i) for i in selected_indexes))
     if len(indexes) < 2:
-        raise ValueError("请选择至少两个尾数箱进行合箱")
+        raise ValueError("请选择至少两个箱子进行合箱")
     if any(i < 0 or i >= len(boxes) for i in indexes):
         raise ValueError("选择的箱子不存在")
 
     selected_boxes = [boxes[i] for i in indexes]
-    if any(not box.is_tail for box in selected_boxes):
-        raise ValueError("只能合并尾数箱")
-
     first = selected_boxes[0]
     if any((box.recipient, box.order_no) != (first.recipient, first.order_no) for box in selected_boxes):
-        raise ValueError("只能合并同一个收件人和订单号的尾数箱")
+        raise ValueError("只能合并同一个收件人和订单号的箱子")
 
     tail_items = []
     item_indexes = {}

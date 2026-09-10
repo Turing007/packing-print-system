@@ -35,7 +35,7 @@ from tkinter import ttk, messagebox, filedialog
 import os, tempfile, webbrowser
 from datetime import datetime
 from product import Product, ProductStore, format_box_sizes
-from packing import calculate_boxes, generate_box_label_html, generate_individual_box_labels_html, BoxLabel, merge_selected_tail_boxes as merge_tail_boxes
+from packing import calculate_boxes, generate_box_label_html, generate_individual_box_labels_html, BoxLabel, merge_selected_boxes as merge_tail_boxes
 from storage import save_packing, load_current_packing, clear_current_packing, get_packing_history, delete_history_record, save_print_log, get_combined_history, get_packing_history_by_id, save_order_to_history, load_order_history, delete_order_history, load_order_history_column_widths, save_order_history_column_widths
 import storage
 import single_instance
@@ -369,7 +369,7 @@ class PackingApp:
         ctrlf.pack(fill=tk.X, pady=3)
         ttk.Checkbutton(ctrlf,text="尾数合并装箱",variable=self.merge_tail,command=self.calculate_boxes).pack(side=tk.LEFT,padx=5)
         ttk.Button(ctrlf,text="计算装箱",command=self.calculate_boxes,width=10).pack(side=tk.LEFT,padx=2)
-        ttk.Button(ctrlf,text="合箱",command=self.merge_selected_tail_boxes,width=8).pack(side=tk.LEFT,padx=2)
+        ttk.Button(ctrlf,text="合箱",command=self.merge_selected_boxes,width=8).pack(side=tk.LEFT,padx=2)
         ttk.Button(ctrlf,text="预览箱单",command=self.preview_packing_list,width=10).pack(side=tk.LEFT,padx=2)
         ttk.Button(ctrlf,text="打印箱唛",command=self.print_box_labels,width=10).pack(side=tk.LEFT,padx=2)
         ttk.Button(ctrlf,text="打印选中",command=self.print_selected_boxes,width=10).pack(side=tk.LEFT,padx=2)
@@ -733,20 +733,20 @@ class PackingApp:
             self.box_row_indexes[item_id] = None
         self.update_status()
 
-    def merge_selected_tail_boxes(self):
+    def merge_selected_boxes(self):
         if not self.current_boxes:
             messagebox.showinfo("提示", "请先点击「计算装箱」生成箱唛数据")
             return
         selected_rows = self.btree.selection()
         if len(selected_rows) < 2:
-            messagebox.showinfo("提示", "请选择至少两个尾数箱进行合箱")
+            messagebox.showinfo("提示", "请选择至少两个箱子进行合箱（整箱、尾数箱均可）")
             return
 
         selected_indexes = []
         for row_id in selected_rows:
             box_index = self.box_row_indexes.get(row_id)
             if box_index is None:
-                messagebox.showinfo("提示", "只能选择尾数箱进行合箱")
+                messagebox.showinfo("提示", "选择的行无效，请重新选择")
                 return
             selected_indexes.append(box_index)
 
@@ -757,7 +757,7 @@ class PackingApp:
             return
 
         self.refresh_box_table()
-        messagebox.showinfo("成功", "已将选中的尾数箱合并为一个箱子")
+        messagebox.showinfo("成功", "已将选中的箱子合并为一个箱子")
 
     def save_current(self):
         if not self.packing_items:
