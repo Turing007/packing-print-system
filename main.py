@@ -98,6 +98,14 @@ def order_history_matches_filters(history_item, keyword, date_from, date_to):
     return True
 
 
+def find_duplicate_order_history(history, order_no):
+    """返回订单历史中订单号与 order_no 相同的记录列表（订单号为空时返回空）。"""
+    order_no = str(order_no or "").strip()
+    if not order_no:
+        return []
+    return [h for h in history if str(h.get("order_no", "")).strip() == order_no]
+
+
 class PackingApp:
     def __init__(self, root):
         self.root = root
@@ -336,6 +344,7 @@ class PackingApp:
         self.e_pk_order = ttk.Entry(row1, width=22)
         self.e_pk_order.pack(side=tk.LEFT, padx=5)
         self.e_pk_order.bind("<KeyRelease>", self._on_recipient_order_change)
+        self.e_pk_order.bind("<FocusOut>", self._on_order_no_focus_out)
         ttk.Label(row1, text="订单备注:").pack(side=tk.LEFT, padx=(10,0))
         self.e_order_remark = ttk.Entry(row1, width=30)
         self.e_order_remark.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
@@ -805,6 +814,8 @@ class PackingApp:
 
     def _on_recipient_order_change(self, event=None):
         """收件人/订单号变化时，同步更新所有装箱项目的对应字段"""
+        # 订单号被编辑过，允许下一次离开输入框时重新提醒
+        self._last_alerted_order_no = None
         if not self.packing_items:
             return
         new_recipient = self.e_pk_recipient.get().strip()
@@ -817,6 +828,30 @@ class PackingApp:
                 changed = True
         if changed:
             self.refresh_packing_table()
+
+    def _on_order_no_focus_out(self, event=None):
+        """订单号输入框失去焦点时，若订单历史中已存在相同订单号则提醒。
+
+        提醒只针对"订单历史里已有的订单号"，因为保存时同订单号会覆盖旧记录。
+        同一个未被再次编辑的订单号只提醒一次，避免来回切换焦点反复弹窗。
+        """
+        order_no = self.e_pk_order.get().strip()
+        if not order_no or order_no == getattr(self, "_last_alerted_order_no", None):
+            return
+        matches = find_duplicate_order_history(load_order_history(), order_no)
+        if not matches:
+            return
+        self._last_alerted_order_no = order_no
+        recipients = "、".join(sorted(
+            {str(h.get("recipient", "")).strip() or "无" for h in matches}))
+        latest = matches[-1]
+        messagebox.showwarning(
+            "订单号已存在",
+            f"订单号「{order_no}」在订单历史中已存在：\n"
+            f"收件人：{recipients}\n"
+            f"保存时间：{latest.get('created_at', '')}\n\n"
+            "保存该订单时会覆盖历史记录，请确认订单号是否输入正确。",
+        )
 
     def _estimate_box_count(self):
         """按当前装箱项目和尾数合并开关实时估算总箱数，与「计算装箱」结果一致。"""
