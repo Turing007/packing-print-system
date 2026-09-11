@@ -2,6 +2,7 @@
 装箱计算引擎
 """
 from dataclasses import dataclass, field, asdict
+from functools import lru_cache
 from typing import Optional
 import json
 import os
@@ -128,12 +129,13 @@ def _balanced_fill_plan(quantity: int, sizes, box_count: int):
     return best_plan
 
 
-def _packing_plan(quantity: int, box_sizes) -> list[tuple[int, int, bool]]:
-    """Find the fewest boxes, preferring the fullest standard-box plan."""
-    if quantity <= 0:
-        return []
+@lru_cache(maxsize=1024)
+def _packing_plan_cached(quantity: int, sizes: tuple) -> tuple[tuple[int, int, bool], ...]:
+    """`_packing_plan` 的缓存实现；sizes 必须是已解析、由大到小去重的元组。
 
-    sizes = parse_box_sizes(box_sizes)
+    结果只取决于 (quantity, sizes)，调用方只读，因此整体缓存是安全的。
+    """
+    sizes = list(sizes)
     max_size = sizes[0]
     reachable = [{0: []}]
     min_size = sizes[-1]
@@ -176,9 +178,17 @@ def _packing_plan(quantity: int, box_sizes) -> list[tuple[int, int, bool]]:
             plan = [(size, size, False) for size in chosen]
             if tail_quantity:
                 plan.append((tail_quantity, max_size, True))
-            return plan
+            return tuple(plan)
 
-    return [(quantity, max_size, True)]
+    return ((quantity, max_size, True),)
+
+
+def _packing_plan(quantity: int, box_sizes) -> list[tuple[int, int, bool]]:
+    """Find the fewest boxes, preferring the fullest standard-box plan."""
+    if quantity <= 0:
+        return []
+    sizes = tuple(parse_box_sizes(box_sizes))
+    return list(_packing_plan_cached(quantity, sizes))
 
 
 def calculate_boxes(products: list[Product], merge_tail: bool, order_remark: str = "") -> list[BoxLabel]:

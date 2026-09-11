@@ -29,7 +29,7 @@ from dataclasses import dataclass, asdict
 from typing import Callable, Optional
 
 # ========== 配置 ==========
-__CURRENT_VERSION__ = "1.0.8"
+__CURRENT_VERSION__ = "1.0.9"
 GITHUB_OWNER = "Turing007"
 GITHUB_REPO = "packing-print-system"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"

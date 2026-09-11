@@ -818,10 +818,29 @@ class PackingApp:
         if changed:
             self.refresh_packing_table()
 
+    def _estimate_box_count(self):
+        """按当前装箱项目和尾数合并开关实时估算总箱数，与「计算装箱」结果一致。"""
+        if not self.packing_items:
+            return 0
+        temp_products = []
+        for item in self.packing_items:
+            temp_products.append(Product(
+                name=item["name"],
+                sku=item["sku"],
+                quantity=item["qty"],
+                qty_per_box=item["per"],
+                spec=item.get("spec",""),
+                recipient=item["recipient"],
+                order_no=item["order"],
+                remark=item.get("remark", "")
+            ))
+        return len(calculate_boxes(temp_products, self.merge_tail.get(), self.e_order_remark.get().strip()))
+
     def update_status(self):
         np = self.store.count()
         ni = len(self.packing_items)
-        nb = len(self.current_boxes)
+        # 尚未生成箱唛时按当前装箱项实时估算，无需先点「计算装箱」
+        nb = len(self.current_boxes) if self.current_boxes else self._estimate_box_count()
         nh = len(load_order_history())
         info = f"就绪 | 产品: {np} | 装箱项: {ni}"
         if nb > 0:
