@@ -29,7 +29,7 @@ from dataclasses import dataclass, asdict
 from typing import Callable, Optional
 
 # ========== 配置 ==========
-__CURRENT_VERSION__ = "1.0.9"
+__CURRENT_VERSION__ = "1.0.10"
 GITHUB_OWNER = "Turing007"
 GITHUB_REPO = "packing-print-system"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
@@ -104,15 +104,23 @@ def is_newer(latest: str, current: str) -> bool:
 
 # ========== 网络请求 ==========
 # 允许请求/下载的主机白名单：release 元数据万一被篡改时，也不允许把请求指到别处
-_ALLOWED_GITHUB_HOSTS = {"api.github.com", "github.com", "objects.githubusercontent.com"}
+_ALLOWED_GITHUB_HOSTS = {"api.github.com", "github.com"}
+# GitHub 会把 Release 资产下载重定向到其 CDN（*.githubusercontent.com），且主机名会变
+# （objects. → release-assets.）。写死主机名会导致下载被自己的白名单拦掉，故按后缀放行；
+# 该域归 GitHub 所有，且仍会经过 _assert_public_host 的公网 IP 校验。
+_ALLOWED_GITHUB_HOST_SUFFIX = ".githubusercontent.com"
 # 下载只允许落在系统临时目录内（模块级常量，作为路径校验的信任根）
 _DOWNLOAD_DIR = os.path.abspath(tempfile.gettempdir())
+
+
+def _is_allowed_github_host(host: str) -> bool:
+    return host in _ALLOWED_GITHUB_HOSTS or host.endswith(_ALLOWED_GITHUB_HOST_SUFFIX)
 
 
 def _ensure_github_url(url: str) -> str:
     """校验 URL 必须是 https 且主机在 GitHub 白名单内，否则拒绝请求。"""
     parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_GITHUB_HOSTS:
+    if parsed.scheme != "https" or not parsed.hostname or not _is_allowed_github_host(parsed.hostname):
         raise ValueError(f"拒绝请求非 GitHub 白名单地址: {url!r}")
     return url
 
