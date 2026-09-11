@@ -15,8 +15,8 @@ cd /d "%~dp0"
 set "BUMP=%~1"
 if "!BUMP!"=="" set "BUMP=patch"
 
-REM 读当前版本号
-for /f "tokens=2 delims== delims " %%i in ('findstr /R "__CURRENT_VERSION__" updater.py') do (
+REM 读当前版本号（/B 锚定行首，避免匹配到 updater.py 里其他含该串的注释行）
+for /f "tokens=2 delims== " %%i in ('findstr /B "__CURRENT_VERSION__" updater.py') do (
     set "CUR=%%~i"
 )
 set "CUR=!CUR:"=!"

@@ -10,10 +10,12 @@ chcp 65001 > nul
 cd /d "%~dp0"
 
 REM ---- 1. 读取版本号（从 updater.py 解析，确保单一来源）----
-for /f "tokens=2 delims== delims " %%i in ('findstr /R "__CURRENT_VERSION__" updater.py') do (
+REM /B 只匹配行首，锁定第 32 行的定义（注释和 `return __CURRENT_VERSION__` 也含该串）
+REM delims 用 "= " 切开 `__CURRENT_VERSION__ = "1.0.9"`：第 2 段是 "1.0.9"，%%~i 去掉引号
+for /f "tokens=2 delims== " %%i in ('findstr /B "__CURRENT_VERSION__" updater.py') do (
     set "VERSION=%%~i"
 )
-REM 去引号
+REM 去引号（兜底：%%~i 已去引号，此处仅防手写改动）
 set "VERSION=!VERSION:"=!"
 if "!VERSION!"=="" set "VERSION=0.0.0"
 
