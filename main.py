@@ -1536,26 +1536,18 @@ class PackingApp:
         _refresh()
 
 def _bring_main_window_to_front(root):
-    """托盘不可用时的窗口唤起实现（逻辑与 tray.py 保持一致）。"""
+    """托盘不可用时的窗口唤起兜底实现（正常路径走 tray.show_window_smoothly 的淡入恢复）。"""
     try:
-        if root.state() == "withdrawn":
-            root.deiconify()
-            if os.name == "nt" and getattr(root, "_tray_was_zoomed", False):
-                try:
-                    root.state("zoomed")
-                except Exception:
-                    pass
-        else:
-            root.deiconify()
-        root.lift()
-        root.focus_force()
-        # 后台进程可能被 Windows 前台锁禁止抢焦点，
-        # 用临时置顶强制把窗口浮到最前，稍后取消置顶
-        root.attributes("-topmost", True)
-        root.after(200, lambda: root.attributes("-topmost", False))
+        from tray import show_window_smoothly
+        show_window_smoothly(root)
     except Exception:
         try:
             root.deiconify()
+            root.lift()
+            root.focus_force()
+            if os.name == "nt":
+                root.attributes("-topmost", True)
+                root.after(200, lambda: root.attributes("-topmost", False))
         except Exception:
             pass
 

@@ -44,6 +44,57 @@ def _make_icon_image() -> Image.Image:
     return img
 
 
+def show_window_smoothly(root):
+    """把主窗口带到前台并淡入显示，避免从托盘恢复时的黑/白屏闪烁。
+
+    - 隐藏/最小化状态下：先在不可见时刷完布局，再按目标尺寸一次性显示，
+      并用约 120ms 的淡入动画盖住显示瞬间的系统底色重绘；
+    - 已显示状态：仅置顶聚焦。
+    """
+    try:
+        state = root.state()
+    except Exception:
+        return
+    try:
+        if state in ("withdrawn", "iconic"):
+            try:
+                root.update_idletasks()   # 隐藏状态下先完成布局，显示时不再挤一帧
+            except Exception:
+                pass
+            root.attributes("-alpha", 0.0)
+            if state == "withdrawn" and os.name == "nt" and getattr(root, "_tray_was_zoomed", False):
+                root.state("zoomed")      # 直接以最大化恢复，避免"先普通再放大"的两次重绘
+            else:
+                root.deiconify()
+            _fade_in(root)
+        else:
+            root.deiconify()
+        root.lift()
+        root.focus_force()
+        if os.name == "nt":
+            root.attributes("-topmost", True)
+            root.after(200, lambda: root.attributes("-topmost", False))
+    except Exception:
+        try:
+            root.deiconify()
+        except Exception:
+            pass
+
+
+def _fade_in(root, step=0):
+    """淡入：约 120ms 内把窗口透明度从 0 恢复到 1。任何异常都保证恢复到不透明。"""
+    steps = (0.45, 0.72, 0.9, 1.0)
+    try:
+        root.attributes("-alpha", steps[step])
+        if step + 1 < len(steps):
+            root.after(30, lambda: _fade_in(root, step + 1))
+    except Exception:
+        try:
+            root.attributes("-alpha", 1.0)
+        except Exception:
+            pass
+
+
 class TrayApp:
     """把 Tk 主窗口挂到系统托盘。用法：
         tray = TrayApp(root, on_show_window=None)
@@ -67,31 +118,7 @@ class TrayApp:
 
     # ---------- 窗口操作（必须在 Tk 主线程执行） ----------
     def _show_window_impl(self):
-        try:
-            if self.root.state() == "withdrawn":
-                self.root.deiconify()      # 从托盘恢复
-                if os.name == "nt" and self._was_zoomed():
-                    self.root.state("zoomed")  # 恢复隐藏前的大小状态
-            else:
-                self.root.deiconify()      # 最小化到任务栏时恢复；已显示则为无操作
-            self.root.lift()               # 置顶
-            self.root.focus_force()
-            # 后台进程可能被 Windows 前台锁禁止抢焦点，
-            # 用临时置顶强制把窗口浮到最前，稍后取消置顶
-            self.root.attributes("-topmost", True)
-            self.root.after(200, lambda: self.root.attributes("-topmost", False))
-        except Exception:
-            try:
-                self.root.deiconify()
-            except Exception:
-                pass
-
-    def _was_zoomed(self) -> bool:
-        # 记录窗口是否曾经最大化过，恢复时保持
-        try:
-            return getattr(self.root, "_tray_was_zoomed", False)
-        except Exception:
-            return False
+        show_window_smoothly(self.root)
 
     def show_window(self):
         """线程安全：从托盘线程切回 Tk 主线程显示窗口。"""

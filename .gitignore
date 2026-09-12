@@ -3,6 +3,7 @@ __pycache__/
 *.pyo
 *.spec.bak
 .mimosa/
+data/
 build/
 dist/
 dist_new/
