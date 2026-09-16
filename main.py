@@ -196,11 +196,11 @@ class PackingApp:
         # ==== 右侧 ====
         rf = ttk.Frame(main_pane)
         main_pane.add(rf, weight=1)
-        nb = ttk.Notebook(rf)
+        self.nb = nb = ttk.Notebook(rf)
         nb.pack(fill=tk.BOTH, expand=True)
 
         # ===== Tab 1: 装箱作业 =====
-        pt = ttk.Frame(nb)
+        self.packing_tab = pt = ttk.Frame(nb)
         nb.add(pt, text="装箱作业")
 
         # 装箱项目列表
@@ -359,6 +359,8 @@ class PackingApp:
         ttk.Label(row2, text="总数量:").pack(side=tk.LEFT, padx=(10,0))
         self.e_pk_qty = ttk.Entry(row2, width=10)
         self.e_pk_qty.pack(side=tk.LEFT, padx=5)
+        self.e_pk_qty.bind("<Return>", self._on_packing_qty_enter)
+        self.e_pk_qty.bind("<KP_Enter>", self._on_packing_qty_enter)
         ttk.Label(row2, text="SKU备注:").pack(side=tk.LEFT, padx=(10, 0))
         self.e_pk_remark = ttk.Entry(row2, width=30)
         self.e_pk_remark.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
@@ -472,6 +474,14 @@ class PackingApp:
                 # 同时设为装箱作业的当前产品
                 self.selected_prod_for_packing = p
                 self.l_selected_product.config(text=f"{p.name}\nSKU:{p.sku} | 规格:{p.spec} | 装箱数:{format_box_sizes(p.qty_per_box)}", foreground="#1a5276")
+                self.focus_packing_qty()
+
+    def focus_packing_qty(self):
+        """选中产品后，把光标自动移到「总数量」输入框并全选旧内容，便于直接键入。"""
+        if self.nb.select() != str(self.packing_tab):
+            return
+        self.e_pk_qty.focus_set()
+        self.e_pk_qty.selection_range(0, tk.END)
 
     def get_form_data(self):
         try:
@@ -561,6 +571,11 @@ class PackingApp:
             if same_sku or same_name_spec:
                 duplicates.append((idx + 1, existing))
         return duplicates
+
+    def _on_packing_qty_enter(self, event=None):
+        """在「总数量」框内按回车，等价于点击「添加」按钮。"""
+        self.add_packing_item()
+        return "break"
 
     def add_packing_item(self):
         if self.selected_prod_for_packing is None:
