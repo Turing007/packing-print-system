@@ -40,7 +40,7 @@ set "NEW=!MAJOR!.!MINOR!.!PATCH!"
 echo 当前版本：!CUR!  -^>  新版本：!NEW!
 
 REM 修改 updater.py
-powershell -Command "(Get-Content updater.py -Encoding UTF8) -replace '__CURRENT_VERSION__\s*=\s*\"[^\"]+\"', '__CURRENT_VERSION__ = \"!NEW!\"' | Set-Content updater.py -Encoding UTF8"
+powershell -NoProfile -Command "$f='updater.py'; $t=[IO.File]::ReadAllText($f,[Text.Encoding]::UTF8); $t=$t -replace '(?<=__CURRENT_VERSION__ = \x22)[\d.]+(?=\x22)','!NEW!'; [IO.File]::WriteAllText($f,$t,(New-Object System.Text.UTF8Encoding($false)))"
 
 REM 重新打包
 call build.bat
