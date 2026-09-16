@@ -169,6 +169,7 @@ class PackingApp:
         pf.grid_rowconfigure(0, weight=1)
         pf.grid_columnconfigure(0, weight=1)
         self.ptree.bind("<<TreeviewSelect>>", self.on_product_select)
+        self.ptree.bind("<ButtonRelease-1>", self._focus_qty_after_product_click)
 
         # 产品编辑表单
         fm = ttk.LabelFrame(lf, text="产品编辑", padding=8)
@@ -198,6 +199,7 @@ class PackingApp:
         main_pane.add(rf, weight=1)
         nb = ttk.Notebook(rf)
         nb.pack(fill=tk.BOTH, expand=True)
+        self.nb = nb
 
         # ===== Tab 1: 装箱作业 =====
         pt = ttk.Frame(nb)
@@ -359,6 +361,8 @@ class PackingApp:
         ttk.Label(row2, text="总数量:").pack(side=tk.LEFT, padx=(10,0))
         self.e_pk_qty = ttk.Entry(row2, width=10)
         self.e_pk_qty.pack(side=tk.LEFT, padx=5)
+        self.e_pk_qty.bind("<Return>", self._on_qty_enter)
+        self.e_pk_qty.bind("<KP_Enter>", self._on_qty_enter)
         ttk.Label(row2, text="SKU备注:").pack(side=tk.LEFT, padx=(10, 0))
         self.e_pk_remark = ttk.Entry(row2, width=30)
         self.e_pk_remark.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
@@ -472,6 +476,25 @@ class PackingApp:
                 # 同时设为装箱作业的当前产品
                 self.selected_prod_for_packing = p
                 self.l_selected_product.config(text=f"{p.name}\nSKU:{p.sku} | 规格:{p.spec} | 装箱数:{format_box_sizes(p.qty_per_box)}", foreground="#1a5276")
+
+    def _focus_qty_after_product_click(self, event):
+        if not self.ptree.identify_row(event.y):
+            return
+        self._focus_qty_entry()
+
+    def _focus_qty_entry(self):
+        try:
+            if self.nb.index(self.nb.select()) != 0:
+                return
+        except tk.TclError:
+            return
+        self.e_pk_qty.focus_set()
+        self.e_pk_qty.selection_range(0, tk.END)
+
+    def _on_qty_enter(self, event):
+        self.add_packing_item()
+        self.e_pk_qty.focus_set()
+        return "break"
 
     def get_form_data(self):
         try:
