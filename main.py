@@ -743,18 +743,18 @@ class PackingApp:
                     "尾数箱",
                     box.remark,
                 ))
-                self.box_row_indexes[item_id] = box_index
+                self.box_row_indexes[item_id] = [box_index]
                 continue
 
             key = (box.recipient, box.product_name, box.product_sku, box.spec, box.qty_per_box, box.is_tail)
             if key not in groups:
-                groups[key] = {"r":box.recipient,"n":box.product_name,"s":box.product_sku,"sp":box.spec,"p":box.qty_per_box,"t":box.is_tail,"c":0,"q":0,"m":box.remark}
+                groups[key] = {"r":box.recipient,"n":box.product_name,"s":box.product_sku,"sp":box.spec,"p":box.qty_per_box,"t":box.is_tail,"c":0,"q":0,"m":box.remark,"rep":box_index}
             groups[key]["c"] += 1
             groups[key]["q"] += box.quantity_in_box
         for g in groups.values():
             bt = "尾数箱" if g["t"] else "整箱"
             item_id = self.btree.insert("",tk.END,values=(g["r"] or "-", g["n"], g["s"], g["sp"] or "", g["p"], g["c"], g["q"], bt, g["m"]))
-            self.box_row_indexes[item_id] = None
+            self.box_row_indexes[item_id] = [g["rep"]]
         self.update_status()
 
     def merge_selected_boxes(self):
@@ -768,11 +768,24 @@ class PackingApp:
 
         selected_indexes = []
         for row_id in selected_rows:
-            box_index = self.box_row_indexes.get(row_id)
-            if box_index is None:
+            row_indexes = self.box_row_indexes.get(row_id)
+            if not row_indexes:
                 messagebox.showinfo("提示", "选择的行无效，请重新选择")
                 return
-            selected_indexes.append(box_index)
+            selected_indexes.extend(row_indexes)
+        selected_indexes = sorted(set(selected_indexes))
+
+        selected_boxes = [self.current_boxes[i] for i in selected_indexes]
+        first = selected_boxes[0]
+        if any((box.recipient, box.order_no) != (first.recipient, first.order_no) for box in selected_boxes):
+            messagebox.showinfo("提示", "只能合并同一个收件人和订单号的箱子")
+            return
+
+        total_qty = sum(box.quantity_in_box for box in selected_boxes)
+        limit = max(box.qty_per_box for box in selected_boxes)
+        if limit and total_qty > limit:
+            if not messagebox.askyesno("超出装箱数", f"合并后共 {total_qty} 件，超过装箱数 {limit}，是否继续合箱？"):
+                return
 
         try:
             self.current_boxes = merge_tail_boxes(self.current_boxes, selected_indexes)
