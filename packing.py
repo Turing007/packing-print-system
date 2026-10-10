@@ -221,6 +221,26 @@ def calculate_boxes(products: list[Product], merge_tail: bool, order_remark: str
                         tail_products.append((product, quantity_in_box))
                         tail_capacity = max(tail_capacity, qty_per_box)
 
+            for product in group:
+                product_key = (product.sku, product.name, product.spec)
+                for quantity_in_box, qty_per_box, is_tail in _packing_plan(product.quantity, product.qty_per_box):
+                    if is_tail:
+                        continue
+                    boxes.append(BoxLabel(
+                        box_number=0, total_boxes=0,
+                        product_name=product.name,
+                        product_sku=product.sku,
+                        qty_per_box=qty_per_box,
+                        quantity_in_box=quantity_in_box,
+                        box_count=full_box_counts.get(product_key + (qty_per_box,), 1),
+                        total_quantity=order_totals.get(product_key, product.quantity),
+                        is_tail=False,
+                        recipient=recipient, order_no=order_no,
+                        spec=product.spec,
+                        product_remark=product.remark,
+                        order_remark=order_remark,
+                        created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    ))
             if tail_products:
                 current_parts = []
                 current_qty = 0
@@ -258,26 +278,6 @@ def calculate_boxes(products: list[Product], merge_tail: bool, order_remark: str
 
                 if current_qty > 0:
                     append_tail_box()
-            for product in group:
-                product_key = (product.sku, product.name, product.spec)
-                for quantity_in_box, qty_per_box, is_tail in _packing_plan(product.quantity, product.qty_per_box):
-                    if is_tail:
-                        continue
-                    boxes.append(BoxLabel(
-                        box_number=0, total_boxes=0,
-                        product_name=product.name,
-                        product_sku=product.sku,
-                        qty_per_box=qty_per_box,
-                        quantity_in_box=quantity_in_box,
-                        box_count=full_box_counts.get(product_key + (qty_per_box,), 1),
-                        total_quantity=order_totals.get(product_key, product.quantity),
-                        is_tail=False,
-                        recipient=recipient, order_no=order_no,
-                        spec=product.spec,
-                        product_remark=product.remark,
-                        order_remark=order_remark,
-                        created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    ))
     else:
         order_totals = {}
         full_box_counts = {}
@@ -429,7 +429,6 @@ def merge_selected_boxes(boxes: list[BoxLabel], selected_indexes: list[int]) -> 
     product_name = "+".join(f"{item['name']}({item['quantity_in_box']})" for item in tail_items)
     product_sku = "+".join(f"{item['sku']}({item['quantity_in_box']})" for item in tail_items)
     quantity_in_box = sum(item["quantity_in_box"] for item in tail_items)
-    insert_at = indexes[0]
     merged_box = BoxLabel(
         box_number=0,
         total_boxes=0,
@@ -449,16 +448,15 @@ def merge_selected_boxes(boxes: list[BoxLabel], selected_indexes: list[int]) -> 
     )
 
     selected_index_set = set(indexes)
-    merged_boxes = []
-    inserted = False
-    for i, box in enumerate(boxes):
-        if i == insert_at:
-            merged_boxes.append(merged_box)
-            inserted = True
-        if i not in selected_index_set:
-            merged_boxes.append(box)
-    if not inserted:
-        merged_boxes.append(merged_box)
+    group_key = (first.recipient, first.order_no)
+    merged_boxes = [box for i, box in enumerate(boxes) if i not in selected_index_set]
+    group_positions = [
+        pos for pos, box in enumerate(merged_boxes)
+        if (box.recipient, box.order_no) == group_key
+    ]
+    # 插到同订单组最后一个箱子之后；若组内箱子全被合并，则维持原首箱位置
+    insert_pos = group_positions[-1] + 1 if group_positions else indexes[0]
+    merged_boxes.insert(insert_pos, merged_box)
 
     _renumber_boxes_by_order(merged_boxes)
     return merged_boxes
