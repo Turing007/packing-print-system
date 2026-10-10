@@ -1,21 +1,26 @@
 @echo off
 REM ============================================================
-REM 一键发布：build → git push → gh release create
-REM 用法：
-REM     release.bat patch    升级 1.0.0 -> 1.0.1
-REM     release.bat minor    升级 1.0.0 -> 1.1.0
-REM     release.bat major    升级 1.0.0 -> 2.0.0
-REM     release.bat          默认 patch
+REM One-click release: bump version, build, commit, tag, push,
+REM create GitHub release.
+REM Usage:
+REM     release.bat patch    bump 1.0.0 to 1.0.1
+REM     release.bat minor    bump 1.0.0 to 1.1.0
+REM     release.bat major    bump 1.0.0 to 2.0.0
+REM     release.bat          default: patch
+REM WARNING: keep this file pure ASCII (English only).
+REM   Windows cmd.exe mis-parses batch files with non-ASCII bytes
+REM   (lines get corrupted / scripts can loop forever). Chinese
+REM   text must come from external files, never from this .bat.
 REM ============================================================
 
 setlocal enabledelayedexpansion
-chcp 65001 > nul
+chcp 936 > nul
 cd /d "%~dp0"
 
 set "BUMP=%~1"
 if "!BUMP!"=="" set "BUMP=patch"
 
-REM 读当前版本号（/B 锚定行首，避免匹配到 updater.py 里其他含该串的注释行）
+REM read current version (updater.py line at column 0)
 for /f "tokens=2 delims== " %%i in ('findstr /B "__CURRENT_VERSION__" updater.py') do (
     set "CUR=%%~i"
 )
@@ -37,31 +42,36 @@ if /i "!BUMP!"=="major" (
     set /a PATCH=PATCH+1
 )
 set "NEW=!MAJOR!.!MINOR!.!PATCH!"
-echo 当前版本：!CUR!  -^>  新版本：!NEW!
+echo Bumping version !CUR! to !NEW!
 
-REM 修改 updater.py
+REM update version number in updater.py
 powershell -NoProfile -Command "$f='updater.py'; $t=[IO.File]::ReadAllText($f,[Text.Encoding]::UTF8); $t=$t -replace '(?<=__CURRENT_VERSION__ = \x22)[\d.]+(?=\x22)','!NEW!'; [IO.File]::WriteAllText($f,$t,(New-Object System.Text.UTF8Encoding($false)))"
 
-REM 重新打包
+REM build (creates release\ exe files)
 call build.bat
 if errorlevel 1 exit /b 1
 
-REM 提交代码
-git add updater.py build.bat build.spec installer.nsi
+REM commit release
+git add updater.py build.bat release.bat build.spec installer.nsi
 git commit -m "release: v!NEW!"
 
-REM 打 tag + 推送
+REM tag + push
 git tag -a "v!NEW!" -m "v!NEW!"
 git push origin master
 git push origin "v!NEW!"
 
-REM 在 GitHub 创建 Release 并上传资产
+REM write release title (Chinese) to GBK temp file, read it back
+python -c "open('release_title.txt','w',encoding='gbk').write('\u88c5\u7bb1\u6253\u5370\u7cfb\u7edf v!NEW!')"
+for /f "usebackq delims=" %%t in ("release_title.txt") do set "TITLE=%%t"
+del /q release_title.txt
+
+REM create GitHub release with assets
 gh release create "v!NEW!" ^
   "release\PackingPrintSystem_v!NEW!_setup.exe" ^
   "release\PackingPrint_v!NEW!_portable.exe" ^
-  --title "装箱打印系统 v!NEW!" ^
+  --title "!TITLE!" ^
   --generate-notes
 
 echo.
-echo 发布完成：https://github.com/Turing007/packing-print-system/releases/tag/v!NEW!
+echo Release done: https://github.com/Turing007/packing-print-system/releases/tag/v!NEW!
 endlocal
