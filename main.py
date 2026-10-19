@@ -34,10 +34,12 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os, tempfile, webbrowser
 from datetime import datetime
+from decimal import Decimal
 from product import Product, ProductStore, format_box_sizes
 from packing import calculate_boxes, generate_box_label_html, generate_individual_box_labels_html, BoxLabel, merge_selected_boxes as merge_tail_boxes
 from storage import save_packing, load_current_packing, clear_current_packing, get_packing_history, delete_history_record, save_print_log, get_combined_history, get_packing_history_by_id, save_order_to_history, load_order_history, delete_order_history, load_order_history_column_widths, save_order_history_column_widths
 import storage
+import supplier
 import single_instance
 from updater import (
     check_update,
@@ -112,6 +114,7 @@ class PackingApp:
         self.root.title("自动装箱打印系统")
         self.root.geometry("1500x900")
         self.store = ProductStore(storage.get_data_dir())
+        self.supplier_store = supplier.SupplierBomStore(storage.get_data_dir())
         self.tray = None  # main() 创建托盘后回填；用于升级前主动退出
         self.merge_tail = tk.BooleanVar(value=False)
         self.current_boxes = []
@@ -126,6 +129,7 @@ class PackingApp:
         self.refresh_box_table()
         self.refresh_packing_table()
 
+        self.refresh_bom_products()
         self.refresh_order_history()
         # 自动更新：菜单 + 后台静默检测
         self._update_state = {"pending_info": None, "busy": False}
@@ -327,6 +331,8 @@ class PackingApp:
 
         ttk.Button(ohbf,text="批量计算装箱",command=self.batch_calculate_from_history,width=14).pack(side=tk.LEFT,padx=2)
 
+        ttk.Button(ohbf,text="生成备货清单",command=self.generate_requirement_from_history,width=14).pack(side=tk.LEFT,padx=2)
+
         ttk.Separator(ohbf,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=5)
 
         ttk.Button(ohbf,text="删除选中",command=self.delete_selected_order_history,width=10).pack(side=tk.LEFT,padx=2)# 装箱输入
@@ -384,6 +390,7 @@ class PackingApp:
         ttk.Button(ctrlf,text="预览箱单",command=self.preview_packing_list,width=10).pack(side=tk.LEFT,padx=2)
         ttk.Button(ctrlf,text="打印箱唛",command=self.print_box_labels,width=10).pack(side=tk.LEFT,padx=2)
         ttk.Button(ctrlf,text="打印选中",command=self.print_selected_boxes,width=10).pack(side=tk.LEFT,padx=2)
+        ttk.Button(ctrlf,text="生成备货清单",command=self.generate_requirement_from_packing,width=14).pack(side=tk.LEFT,padx=2)
         ttk.Separator(ctrlf,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=8)
         ttk.Button(ctrlf,text="暂存当前",command=self.save_current,width=10).pack(side=tk.LEFT,padx=2)
         ttk.Button(ctrlf,text="读取暂存",command=self.load_current,width=10).pack(side=tk.LEFT,padx=2)
@@ -439,6 +446,101 @@ class PackingApp:
         ttk.Button(hbf,text="删除记录",command=self.delete_history,width=10).pack(side=tk.LEFT,padx=2)
         self.l_hstatus = ttk.Label(ht, text="共 0 条记录")
         self.l_hstatus.pack(fill=tk.X, pady=(2,0))
+
+        # ===== Tab 3: 供应商映射 =====
+        self.bom_tab = bt = ttk.Frame(nb)
+        nb.add(bt, text="供应商映射")
+
+        bom_pane = ttk.PanedWindow(bt, orient=tk.HORIZONTAL)
+        bom_pane.pack(fill=tk.BOTH, expand=True)
+
+        # 左：客户产品列表
+        bom_left = ttk.Frame(bom_pane)
+        bom_pane.add(bom_left, weight=1)
+        ttk.Label(bom_left, text="客户产品", font=("Microsoft YaHei",12,"bold")).pack(anchor=tk.W)
+
+        bom_search_row = ttk.Frame(bom_left)
+        bom_search_row.pack(fill=tk.X, pady=(0,3))
+        self.bom_search_var = tk.StringVar()
+        self.bom_search_var.trace("w", lambda *a: self.refresh_bom_products())
+        ttk.Entry(bom_search_row, textvariable=self.bom_search_var, width=18).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,4))
+        self.bom_only_unmapped = tk.BooleanVar(value=False)
+        ttk.Checkbutton(bom_search_row, text="只看未映射", variable=self.bom_only_unmapped,
+                        command=self.refresh_bom_products).pack(side=tk.LEFT)
+
+        bom_pf = ttk.Frame(bom_left)
+        bom_pf.pack(fill=tk.BOTH, expand=True)
+        bom_cols = ("status","name","sku","spec")
+        self.bom_ptree = ttk.Treeview(bom_pf, columns=bom_cols, show="headings", height=12)
+        for col, text, width in (("status","状态",70),("name","品名",150),("sku","SKU",95),("spec","规格",50)):
+            self.bom_ptree.heading(col, text=text)
+            self.bom_ptree.column(col, width=width, minwidth=45)
+        bom_vsb = ttk.Scrollbar(bom_pf, orient=tk.VERTICAL, command=self.bom_ptree.yview)
+        self.bom_ptree.configure(yscrollcommand=bom_vsb.set)
+        self.bom_ptree.grid(row=0,column=0,sticky="nsew")
+        bom_vsb.grid(row=0,column=1,sticky="ns")
+        bom_pf.grid_rowconfigure(0,weight=1)
+        bom_pf.grid_columnconfigure(0,weight=1)
+        self.bom_ptree.bind("<<TreeviewSelect>>", self.on_bom_product_select)
+        self.l_bom_summary = ttk.Label(bom_left, text="")
+        self.l_bom_summary.pack(fill=tk.X, pady=(3,0))
+
+        # 右：当前产品的供应商明细
+        bom_right = ttk.Frame(bom_pane)
+        bom_pane.add(bom_right, weight=2)
+        self.l_bom_current = ttk.Label(bom_right, text="请在左侧选择一个客户产品",
+                                       font=("Microsoft YaHei",11,"bold"), foreground="#1a5276")
+        self.l_bom_current.pack(anchor=tk.W)
+
+        bom_cf = ttk.Frame(bom_right)
+        bom_cf.pack(fill=tk.BOTH, expand=True, pady=(3,0))
+        bom_ccols = ("supplier","product","sku","usage","remark")
+        self.bom_ctree = ttk.Treeview(bom_cf, columns=bom_ccols, show="headings", height=10)
+        for col, text, width in (("supplier","供应商",110),("product","供应商产品名称",200),
+                                 ("sku","供应商货号",110),("usage","用量",60),("remark","备注",120)):
+            self.bom_ctree.heading(col, text=text)
+            self.bom_ctree.column(col, width=width, minwidth=45)
+        bom_cvsb = ttk.Scrollbar(bom_cf, orient=tk.VERTICAL, command=self.bom_ctree.yview)
+        self.bom_ctree.configure(yscrollcommand=bom_cvsb.set)
+        self.bom_ctree.grid(row=0,column=0,sticky="nsew")
+        bom_cvsb.grid(row=0,column=1,sticky="ns")
+        bom_cf.grid_rowconfigure(0,weight=1)
+        bom_cf.grid_columnconfigure(0,weight=1)
+        self.bom_ctree.bind("<<TreeviewSelect>>", self.on_bom_component_select)
+
+        bom_form = ttk.LabelFrame(bom_right, text="供应商明细编辑（一个客户产品可对应多个供应商产品）", padding=8)
+        bom_form.pack(fill=tk.X, pady=3)
+        ttk.Label(bom_form, text="供应商:").grid(row=0,column=0,sticky=tk.W,pady=2)
+        self.e_bom_supplier = ttk.Combobox(bom_form, width=22)
+        self.e_bom_supplier.grid(row=0,column=1,sticky=tk.EW,pady=2,padx=(5,10))
+        ttk.Label(bom_form, text="供应商产品:").grid(row=0,column=2,sticky=tk.W,pady=2)
+        self.e_bom_product = ttk.Entry(bom_form, width=26)
+        self.e_bom_product.grid(row=0,column=3,sticky=tk.EW,pady=2,padx=(5,0))
+
+        ttk.Label(bom_form, text="供应商货号:").grid(row=1,column=0,sticky=tk.W,pady=2)
+        self.e_bom_sku = ttk.Entry(bom_form, width=22)
+        self.e_bom_sku.grid(row=1,column=1,sticky=tk.EW,pady=2,padx=(5,10))
+        ttk.Label(bom_form, text="用量(每1个客户产品):").grid(row=1,column=2,sticky=tk.W,pady=2)
+        self.e_bom_usage = ttk.Entry(bom_form, width=10)
+        self.e_bom_usage.grid(row=1,column=3,sticky=tk.W,pady=2,padx=(5,0))
+        ttk.Label(bom_form, text="备注:").grid(row=2,column=0,sticky=tk.W,pady=2)
+        self.e_bom_remark = ttk.Entry(bom_form, width=40)
+        self.e_bom_remark.grid(row=2,column=1,columnspan=3,sticky=tk.EW,pady=2,padx=(5,0))
+
+        bom_bf = ttk.Frame(bom_form)
+        bom_bf.grid(row=3,column=0,columnspan=4,pady=(8,0))
+        ttk.Button(bom_bf,text="新增",command=self.add_bom_component,width=8).pack(side=tk.LEFT,padx=2)
+        ttk.Button(bom_bf,text="修改",command=self.update_bom_component,width=8).pack(side=tk.LEFT,padx=2)
+        ttk.Button(bom_bf,text="删除",command=self.delete_bom_component,width=8).pack(side=tk.LEFT,padx=2)
+        ttk.Button(bom_bf,text="清空",command=self.clear_bom_form,width=8).pack(side=tk.LEFT,padx=2)
+        bom_form.grid_columnconfigure(1, weight=1)
+        bom_form.grid_columnconfigure(3, weight=1)
+
+        self.bom_selected = None  # {"key":..., "customer":{...}, "orphan":bool}
+        self.bom_selected_component = None
+        ttk.Label(bom_right,
+                  text="用量支持小数（最多3位，如 1.5）；备货数量 = 客户数量 × 用量。装箱后可在「装箱作业」或「装箱历史」生成备货清单。",
+                  foreground="#666", wraplength=760, justify=tk.LEFT).pack(anchor=tk.W)
 
     # ===== 产品管理 =====
 
@@ -499,25 +601,420 @@ class PackingApp:
 
     def add_product(self):
         p=self.get_form_data()
-        if p: self.store.add(p); self.refresh_product_table(); self.clear_form()
+        if p:
+            self.store.add(p); self.refresh_product_table()
+            self.refresh_bom_products(); self.clear_form()
 
     def update_product(self):
         if self.selected_product_index is None:
             messagebox.showinfo("提示","请先选择产品")
             return
         p=self.get_form_data()
-        if p: self.store.update(self.selected_product_index,p); self.refresh_product_table(); self.clear_form()
+        if not p:
+            return
+        old=self.store.get(self.selected_product_index)
+        old_key=supplier.product_key(old.name,old.sku,old.spec) if old else None
+        self.store.update(self.selected_product_index,p)
+        self.refresh_product_table()
+        # 改名/改 SKU/改规格会改变客户产品身份，映射需自动迁移，避免静默丢失
+        self._sync_bom_identity(
+            old_key, supplier.product_key(p.name,p.sku,p.spec),
+            {"name":p.name,"sku":p.sku,"spec":p.spec})
+        self.refresh_bom_products(); self.clear_form()
 
     def delete_product(self):
         if self.selected_product_index is None:
             messagebox.showinfo("提示","请先选择产品")
             return
-        if messagebox.askyesno("确认","确定删除该产品吗？"):
-            self.store.remove(self.selected_product_index); self.refresh_product_table(); self.clear_form()
+        if messagebox.askyesno("确认","确定删除该产品吗？\n\n对应的供应商映射会保留，并标记为「产品已删除」，可在「供应商映射」页清理。"):
+            self.store.remove(self.selected_product_index); self.refresh_product_table()
+            self.refresh_bom_products(); self.clear_form()
 
     def clear_form(self):
         self.e_name.delete(0,tk.END); self.e_sku.delete(0,tk.END); self.e_spec.delete(0,tk.END); self.e_per.delete(0,tk.END)
         self.selected_product_index = None
+
+    # ===== 供应商映射 =====
+
+    def _bom_products(self):
+        """客户产品列表 + 孤儿映射（产品已删除但映射保留）。"""
+        products = self.store.list_all()
+        existing = {supplier.product_key(p.name, p.sku, p.spec) for p in products}
+        rows = []
+        for p in products:
+            key = supplier.product_key(p.name, p.sku, p.spec)
+            rows.append({
+                "key": key, "name": p.name, "sku": p.sku, "spec": p.spec,
+                "mapped": self.supplier_store.has_mapping(key), "orphan": False,
+            })
+        for mapping in self.supplier_store.list_mappings():
+            if mapping["key"] in existing:
+                continue
+            customer = mapping["customer"]
+            rows.append({
+                "key": mapping["key"], "name": customer.get("name", ""),
+                "sku": customer.get("sku", ""), "spec": customer.get("spec", ""),
+                "mapped": bool(mapping["components"]), "orphan": True,
+            })
+        return rows
+
+    def refresh_bom_products(self):
+        for i in self.bom_ptree.get_children():
+            self.bom_ptree.delete(i)
+        keyword = self.bom_search_var.get().strip().lower()
+        only_unmapped = self.bom_only_unmapped.get()
+        rows = []
+        for row in self._bom_products():
+            if keyword and keyword not in row["name"].lower() and keyword not in row["sku"].lower():
+                continue
+            if only_unmapped and row["mapped"]:
+                continue
+            rows.append(row)
+        rows.sort(key=lambda r: (r["orphan"], r["name"].lower(), r["sku"]))
+        for row in rows:
+            if row["orphan"]:
+                status = "产品已删除"
+            elif row["mapped"]:
+                status = "已映射"
+            else:
+                status = "未映射"
+            self.bom_ptree.insert("", tk.END, iid=row["key"], values=(
+                status, row["name"], row["sku"], row["spec"]))
+        total = len(self._bom_products())
+        mapped = sum(1 for r in self._bom_products() if r["mapped"] and not r["orphan"])
+        orphans = sum(1 for r in self._bom_products() if r["orphan"])
+        text = f"已映射 {mapped} / {total}"
+        if orphans:
+            text += f" | 孤儿映射 {orphans} 条（产品已删除，请确认后清理）"
+        self.l_bom_summary.config(text=text)
+        # 供应商下拉候选取自已配置数据，仍允许手动输入新供应商
+        self.e_bom_supplier.configure(values=self.supplier_store.suppliers())
+        if self.bom_selected and self.bom_ptree.exists(self.bom_selected["key"]):
+            self.bom_ptree.selection_set(self.bom_selected["key"])
+
+    def on_bom_product_select(self, event=None):
+        sel = self.bom_ptree.selection()
+        if not sel:
+            return
+        key = sel[0]
+        found = None
+        for row in self._bom_products():
+            if row["key"] == key:
+                found = row
+                break
+        if found is None:
+            return
+        self.bom_selected = {
+            "key": key,
+            "customer": {"name": found["name"], "sku": found["sku"], "spec": found["spec"]},
+            "orphan": found["orphan"],
+        }
+        label = f"{found['name']}"
+        if found["spec"]:
+            label += f"（{found['spec']}）"
+        if found["sku"]:
+            label += f"  SKU:{found['sku']}"
+        if found["orphan"]:
+            label += "  [产品已删除]"
+        self.l_bom_current.config(text=label)
+        self.refresh_bom_components()
+        self.clear_bom_form(clear_supplier_values=False)
+
+    def refresh_bom_components(self):
+        for i in self.bom_ctree.get_children():
+            self.bom_ctree.delete(i)
+        self.bom_selected_component = None
+        if not self.bom_selected:
+            return
+        components = self.supplier_store.get_components(self.bom_selected["key"])
+        for index, component in enumerate(components):
+            self.bom_ctree.insert("", tk.END, iid=str(index), values=(
+                component["supplier"], component["supplier_product"],
+                component.get("supplier_sku", ""),
+                supplier.format_quantity(component.get("usage_qty", 1)),
+                component.get("remark", ""),
+            ))
+
+    def on_bom_component_select(self, event=None):
+        sel = self.bom_ctree.selection()
+        if not sel or not self.bom_selected:
+            return
+        index = int(sel[0])
+        components = self.supplier_store.get_components(self.bom_selected["key"])
+        if not (0 <= index < len(components)):
+            return
+        self.bom_selected_component = index
+        component = components[index]
+        self.e_bom_supplier.set(component["supplier"])
+        self.e_bom_product.delete(0, tk.END)
+        self.e_bom_product.insert(0, component["supplier_product"])
+        self.e_bom_sku.delete(0, tk.END)
+        self.e_bom_sku.insert(0, component.get("supplier_sku", ""))
+        self.e_bom_usage.delete(0, tk.END)
+        self.e_bom_usage.insert(0, supplier.format_quantity(component.get("usage_qty", 1)))
+        self.e_bom_remark.delete(0, tk.END)
+        self.e_bom_remark.insert(0, component.get("remark", ""))
+
+    def _bom_form_component(self):
+        supplier_name = self.e_bom_supplier.get().strip()
+        product_name = self.e_bom_product.get().strip()
+        if not supplier_name:
+            messagebox.showwarning("提示", "请填写供应商名称")
+            return None
+        if not product_name:
+            messagebox.showwarning("提示", "请填写供应商产品名称")
+            return None
+        try:
+            usage = supplier.parse_usage(self.e_bom_usage.get().strip() or "1")
+        except ValueError as e:
+            messagebox.showwarning("提示", str(e))
+            return None
+        return {
+            "supplier": supplier_name,
+            "supplier_product": product_name,
+            "supplier_sku": self.e_bom_sku.get().strip(),
+            "usage_qty": float(usage),
+            "remark": self.e_bom_remark.get().strip(),
+        }
+
+    def clear_bom_form(self, clear_supplier_values=True):
+        self.bom_selected_component = None
+        self.e_bom_product.delete(0, tk.END)
+        self.e_bom_sku.delete(0, tk.END)
+        self.e_bom_usage.delete(0, tk.END)
+        self.e_bom_remark.delete(0, tk.END)
+        if clear_supplier_values:
+            self.e_bom_supplier.set("")
+        self.bom_ctree.selection_remove(*self.bom_ctree.selection())
+
+    def add_bom_component(self):
+        if not self.bom_selected:
+            messagebox.showinfo("提示", "请先在左侧选择一个客户产品")
+            return
+        component = self._bom_form_component()
+        if not component:
+            return
+        try:
+            self.supplier_store.add_component(self.bom_selected["key"], self.bom_selected["customer"], component)
+        except ValueError as e:
+            messagebox.showwarning("提示", str(e))
+            return
+        self.refresh_bom_components()
+        self.refresh_bom_products()
+        self.clear_bom_form()
+
+    def update_bom_component(self):
+        if not self.bom_selected:
+            messagebox.showinfo("提示", "请先在左侧选择一个客户产品")
+            return
+        if self.bom_selected_component is None:
+            messagebox.showinfo("提示", "请在右侧明细中选择要修改的供应商产品")
+            return
+        component = self._bom_form_component()
+        if not component:
+            return
+        try:
+            self.supplier_store.update_component(
+                self.bom_selected["key"], self.bom_selected_component,
+                self.bom_selected["customer"], component)
+        except ValueError as e:
+            messagebox.showwarning("提示", str(e))
+            return
+        self.refresh_bom_components()
+        self.refresh_bom_products()
+        self.clear_bom_form()
+
+    def delete_bom_component(self):
+        if not self.bom_selected:
+            messagebox.showinfo("提示", "请先在左侧选择一个客户产品")
+            return
+        if self.bom_selected_component is None:
+            messagebox.showinfo("提示", "请在右侧明细中选择要删除的供应商产品")
+            return
+        if not messagebox.askyesno("确认删除", "确定删除选中的供应商明细吗？（只删除这一条，客户产品保留）"):
+            return
+        try:
+            self.supplier_store.remove_component(self.bom_selected["key"], self.bom_selected_component)
+        except ValueError as e:
+            messagebox.showwarning("提示", str(e))
+            return
+        self.refresh_bom_components()
+        self.refresh_bom_products()
+        self.clear_bom_form()
+
+    def _sync_bom_identity(self, old_key, new_key, customer):
+        """产品身份（SKU/品名/规格）变化时迁移映射，避免静默丢失。"""
+        if not old_key or old_key == new_key:
+            return
+        if not self.supplier_store.get_mapping(old_key):
+            return
+        try:
+            self.supplier_store.move_mapping(old_key, new_key, customer)
+        except Exception as e:
+            messagebox.showwarning("提示", f"供应商映射同步失败：{e}")
+            return
+        self.refresh_bom_products()
+        messagebox.showinfo("提示", "产品身份已变化，对应的供应商映射已自动同步。")
+
+    # ===== 备货清单 =====
+
+    def generate_requirement_from_packing(self):
+        """用当前装箱项目生成备货清单（可含多个订单）。"""
+        if not self.packing_items:
+            messagebox.showinfo("提示", "装箱项目列表为空，请先添加装箱项")
+            return
+        self._generate_requirement(self.packing_items, "当前装箱")
+
+    def generate_requirement_from_history(self):
+        """用装箱历史中选中的订单生成备货清单。"""
+        sel = self.ohtree.selection()
+        if not sel:
+            messagebox.showinfo("提示", "请在装箱历史中选择订单（Ctrl+点击多选）")
+            return
+        history = load_order_history()
+        items = []
+        for iid in sel:
+            real_iid = self.ohtree.parent(iid) or iid
+            try:
+                record = history[int(real_iid.replace("oh_", ""))]
+            except (ValueError, IndexError):
+                continue
+            for item in record.get("items", []):
+                items.append({
+                    "name": item.get("name", ""),
+                    "sku": item.get("sku", ""),
+                    "spec": item.get("spec", ""),
+                    "qty": item.get("qty", 0),
+                    "order": record.get("order_no", ""),
+                    "recipient": record.get("recipient", ""),
+                })
+        if not items:
+            messagebox.showinfo("提示", "选中的订单没有可用的产品明细")
+            return
+        self._generate_requirement(items, "装箱历史")
+
+    def _generate_requirement(self, items, source_label):
+        result = supplier.build_requirement(items, self.supplier_store)
+        if not result["rows"]:
+            unmapped_count = len(result["unmapped"])
+            messagebox.showwarning(
+                "无法生成",
+                f"没有可生成的已映射客户产品。\n\n未配置供应商映射的客户产品：{unmapped_count} 个。\n"
+                "请先到「供应商映射」页配置，配置后重新生成。")
+            return
+        if result["unmapped"]:
+            message = (
+                f"有 {len(result['unmapped'])} 个客户产品未配置供应商映射（或明细为空），"
+                f"共 {result['unmapped_quantity']} 件不会计入备货清单：\n\n"
+                f"{supplier.unmapped_summary(result)}\n\n仍要生成吗？")
+            if not messagebox.askyesno("存在未映射客户产品", message):
+                return
+        self.show_requirement_window(result, source_label)
+
+    def show_requirement_window(self, result, source_label):
+        win = tk.Toplevel(self.root)
+        win.title(f"备货清单 - {source_label}")
+        win.geometry("1020x680")
+        win.transient(self.root)
+        win.grab_set()
+
+        summary = (
+            f"供应商 {result['supplier_count']} 家 | 供应商产品 {result['product_count']} 项 | "
+            f"涉及订单 {result['order_count']} 个 | 客户产品 {result['customer_count']} 个 | "
+            f"合计 {supplier.format_quantity(result['total_quantity'])}"
+        )
+        if result["unmapped"]:
+            summary += f" | 未映射 {len(result['unmapped'])} 个（未计入）"
+        ttk.Label(win, text=summary, font=("Microsoft YaHei", 11, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 4))
+        if result["unmapped"]:
+            note = "未计入：" + supplier.unmapped_summary(result, limit=8).replace("\n", "；")
+            ttk.Label(win, text=note, foreground="#b35c00", wraplength=980, justify=tk.LEFT).pack(
+                anchor=tk.W, padx=10, pady=(0, 4))
+
+        frame = ttk.Frame(win)
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
+        cols = ("product", "sku", "qty", "source")
+        tree = ttk.Treeview(frame, columns=cols, show="tree headings", height=16)
+        tree.heading("#0", text="供应商 / 供应商产品")
+        tree.heading("product", text="供应商产品名称")
+        tree.heading("sku", text="供应商货号")
+        tree.heading("qty", text="备货数量")
+        tree.heading("source", text="来源")
+        tree.column("#0", width=230, minwidth=150)
+        tree.column("product", width=260, minwidth=150)
+        tree.column("sku", width=130, minwidth=80)
+        tree.column("qty", width=90, minwidth=60, anchor=tk.E)
+        tree.column("source", width=300, minwidth=120)
+        vsb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        frame.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+
+        groups = {}
+        for row in result["rows"]:
+            groups.setdefault(row["supplier"], []).append(row)
+        non_integer_rows = []
+        for supplier_name, rows in groups.items():
+            subtotal = sum((r["quantity"] for r in rows), Decimal("0"))
+            parent = tree.insert("", tk.END, text=supplier_name, open=True, values=(
+                "", "", supplier.format_quantity(subtotal), f"{len(rows)} 项"))
+            for row in rows:
+                source_orders = {}
+                for source in row["sources"]:
+                    key = source["order_no"] or "-"
+                    source_orders[key] = source_orders.get(key, Decimal("0")) + source["quantity"]
+                source_text = "；".join(
+                    f"{order_no}({supplier.format_quantity(qty)})"
+                    for order_no, qty in sorted(source_orders.items())
+                )
+                tags = ("non_integer",) if row["quantity"] != row["quantity"].to_integral_value() else ()
+                if tags:
+                    non_integer_rows.append(f"{row['supplier']} / {row['supplier_product']}")
+                tree.insert(parent, tk.END, text="", values=(
+                    row["supplier_product"], row["supplier_sku"],
+                    supplier.format_quantity(row["quantity"]), source_text), tags=tags)
+        tree.tag_configure("non_integer", foreground="#b35c00")
+        if non_integer_rows:
+            ttk.Label(win, text="以下备货数量为非整数，请人工确认：" + "；".join(non_integer_rows[:8]),
+                      foreground="#b35c00", wraplength=980, justify=tk.LEFT).pack(
+                anchor=tk.W, padx=10, pady=(0, 2))
+
+        buttons = ttk.Frame(win)
+        buttons.pack(fill=tk.X, padx=10, pady=8)
+        ttk.Button(buttons, text="打印（按供应商分页）", width=20,
+                   command=lambda: self.print_requirement(result)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(buttons, text="导出CSV", width=12,
+                   command=lambda: self.export_requirement_csv(result)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(buttons, text="复制", width=10,
+                   command=lambda: self.copy_requirement(result)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(buttons, text="关闭", width=10, command=win.destroy).pack(side=tk.RIGHT, padx=2)
+
+    def print_requirement(self, result):
+        html = supplier.generate_requirement_html(result)
+        self._open_html(html, "requirement_list_print.html")
+
+    def export_requirement_csv(self, result):
+        filename = f"备货清单_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+        path = filedialog.asksaveasfilename(
+            title="导出备货清单", defaultextension=".csv", initialfile=filename,
+            filetypes=[("CSV 文件", "*.csv"), ("所有文件", "*.*")])
+        if not path:
+            return
+        try:
+            supplier.write_requirement_csv(result, path)
+        except Exception as e:
+            messagebox.showerror("导出失败", f"导出 CSV 失败：{e}")
+            return
+        messagebox.showinfo("导出成功", f"已导出到：\n{path}")
+
+    def copy_requirement(self, result):
+        text = supplier.requirement_tsv_text(result)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.root.update()
+        messagebox.showinfo("已复制", "备货清单已复制到剪贴板，可直接粘贴到 Excel 或发送给供应商。")
 
     # ===== 装箱项目管理 =====
 

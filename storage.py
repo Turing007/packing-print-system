@@ -48,7 +48,7 @@ _BACKUP_DIR = _apply_backup_marker()
 # 自动备份：每次保存保留最近 5 份历史（products.json.bak 是最新，.bak.4 最旧）
 MAX_BACKUPS = 5
 # 哪些文件需要备份（用户录入的核心数据，不要备份 UI 列宽这种临时配置）
-BACKUP_FILES = {"products.json", "order_history.json", "current_packing.json"}
+BACKUP_FILES = {"products.json", "order_history.json", "current_packing.json", "supplier_bom.json"}
 
 
 def get_data_dir() -> str:
