@@ -323,12 +323,14 @@ def get_combined_history():
 ORDER_HISTORY_FILE = "order_history.json"
 UI_CONFIG_FILE = "ui_config.json"
 
-def save_order_to_history(recipient: str, order_no: str, items: list, order_remark: str = "") -> str:
+def save_order_to_history(recipient: str, order_no: str, items: list, order_remark: str = "",
+                          line_no: str = "") -> str:
     """保存一个订单到历史记录"""
     history = _load_json(ORDER_HISTORY_FILE, [])
     entry = {
         "recipient": recipient,
         "order_no": order_no,
+        "line_no": line_no,
         "items": items,  # list of {"name":...,"sku":...,"per":...,"qty":...}
         "order_remark": order_remark,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

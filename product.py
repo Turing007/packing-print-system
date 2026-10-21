@@ -52,6 +52,7 @@ class Product:
     recipient: str = ""
     order_no: str = ""
     remark: str = ""
+    line_no: str = ""
 
     @property
     def full_boxes(self) -> int:

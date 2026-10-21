@@ -32,6 +32,12 @@ class BoxLabel:
     tail_items: list = field(default_factory=list)
     product_remark: str = ""
     order_remark: str = ""
+    line_no: str = ""
+
+    @property
+    def display_recipient(self) -> str:
+        """收件人展示文本：有行号时显示为「收件人（行号）」。"""
+        return format_recipient(self.recipient, self.line_no)
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -72,6 +78,15 @@ class PackingRecord:
         return cls.from_dict(json.loads(json_str))
 
 _MAX_BALANCED_DFS_NODES = 300000
+
+
+def format_recipient(recipient: str, line_no: str = "") -> str:
+    """收件人展示文本：行号非空时追加为「收件人（行号）」。"""
+    recipient = (recipient or "").strip()
+    line_no = str(line_no or "").strip()
+    if not line_no:
+        return recipient
+    return f"{recipient}（{line_no}）" if recipient else f"（{line_no}）"
 
 
 def _balanced_fill_plan(quantity: int, sizes, box_count: int):
@@ -203,6 +218,7 @@ def calculate_boxes(products: list[Product], merge_tail: bool, order_remark: str
             rec_groups[key].append(p)
 
         for (recipient, order_no), group in rec_groups.items():
+            line_no = _group_line_no(group)
             order_totals = {}
             full_box_counts = {}
             for product in group:
@@ -239,6 +255,7 @@ def calculate_boxes(products: list[Product], merge_tail: bool, order_remark: str
                         spec=product.spec,
                         product_remark=product.remark,
                         order_remark=order_remark,
+                        line_no=line_no,
                         created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     ))
             if tail_products:
@@ -263,6 +280,7 @@ def calculate_boxes(products: list[Product], merge_tail: bool, order_remark: str
                         created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         tail_items=tail_items,
                         order_remark=order_remark,
+                        line_no=line_no,
                     ))
 
                 for product, remaining in tail_products:
@@ -308,6 +326,7 @@ def calculate_boxes(products: list[Product], merge_tail: bool, order_remark: str
                         remark="尾数",
                         product_remark=product.remark,
                         order_remark=order_remark,
+                        line_no=product.line_no,
                         created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     ))
                     continue
@@ -325,11 +344,21 @@ def calculate_boxes(products: list[Product], merge_tail: bool, order_remark: str
                     spec=product.spec,
                     product_remark=product.remark,
                     order_remark=order_remark,
+                    line_no=product.line_no,
                     created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 ))
 
     _renumber_boxes_by_order(boxes)
     return boxes
+
+
+def _group_line_no(products) -> str:
+    """同一订单共用一个行号：取组内第一个非空行号。"""
+    for product in products:
+        line_no = str(getattr(product, "line_no", "") or "").strip()
+        if line_no:
+            return line_no
+    return ""
 
 
 def _renumber_boxes_by_order(boxes: list[BoxLabel]) -> None:
@@ -443,6 +472,7 @@ def merge_selected_boxes(boxes: list[BoxLabel], selected_indexes: list[int]) -> 
         order_no=first.order_no,
         remark="手动合箱",
         order_remark=first.order_remark,
+        line_no=first.line_no,
         created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         tail_items=tail_items,
     )
@@ -469,14 +499,14 @@ def generate_box_label_html(boxes: list[BoxLabel], customer_name: str = "") -> s
     
     recipients = {}
     for box in boxes:
-        r = box.recipient or "未指定"
+        r = box.display_recipient or "未指定"
         if r not in recipients:
             recipients[r] = []
         recipients[r].append(box)
     
     rec_counts = {}
     for box in boxes:
-        r = box.recipient or "未指定"
+        r = box.display_recipient or "未指定"
         rec_counts[r] = rec_counts.get(r, 0) + 1
     
     html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + _get_packing_list_css() + '</style></head><body><div class="packing-list">'
@@ -527,7 +557,7 @@ def generate_individual_box_labels_html(boxes: list[BoxLabel]) -> str:
         parts = [
             '<div class="page"><div class="label' + label_class + '">',
             '<div class="l-header"><div class="l-title">箱 唛 / BOX LABEL</div>' + tail_badge + '</div>',
-            '<div class="l-row"><span class="l-label">收件人: </span><span class="l-recipient">' + text(box.recipient) + '</span></div>',
+            '<div class="l-row"><span class="l-label">收件人: </span><span class="l-recipient">' + text(box.display_recipient) + '</span></div>',
             '<div class="l-row"><span class="l-label">订单号: </span><span class="l-value">' + text(box.order_no) + '</span></div>',
             '<div class="l-box-no">' + text(box.box_number) + ' / ' + text(box.total_boxes) + '</div>',
         ]
@@ -695,7 +725,7 @@ body {
 .l-row { display: flex; margin-bottom: 1.5px; font-size: 8pt; }
 .l-label { color: #000; width: 20mm; flex-shrink: 0; font-size: 11pt; }
 .l-value { font-weight: bold; font-size: 13.5pt; color: #000; }
-.l-recipient { font-weight: bold; font-size: 18pt; color: #000; }
+.l-recipient { font-weight: bold; font-size: 18pt; color: #000; min-width: 0; overflow-wrap: anywhere; }
 .l-box-no { font-size: 22pt; font-weight: bold; color: #000; text-align: center; margin: 2mm 0; }
 .l-table { width: 100%; border-collapse: collapse; margin-top: 1.5mm; }
 .l-table th { background: #eee; font-size: 7.5pt; padding: 0.8mm 1.5mm; border: 1px solid #999; text-align: center; }
@@ -733,7 +763,7 @@ def _legacy_generate_individual_box_labels_html(boxes: list[BoxLabel]) -> str:
         parts.append('<div class="page">')
         parts.append('<div class="label' + tc + '">')
         parts.append('<div class="l-header"><div class="l-title">箱 唛 / BOX LABEL</div>' + tail_badge + '</div>')
-        parts.append('<div class="l-row"><span class="l-label">收件人: </span><span class="l-recipient">' + (box.recipient or '-') + '</span></div>')
+        parts.append('<div class="l-row"><span class="l-label">收件人: </span><span class="l-recipient">' + (box.display_recipient or '-') + '</span></div>')
         parts.append('<div class="l-row"><span class="l-label">订单号: </span><span class="l-value">' + (box.order_no or '-') + '</span></div>')
         parts.append('<div class="l-box-no">' + str(box.box_number) + ' / ' + str(box.total_boxes) + '</div>')
         parts.append('<table class="l-table"><thead><tr><th>SKU</th><th>品名</th><th>规格</th><th>装箱数</th><th>箱数</th><th>总数量</th></tr></thead><tbody>')

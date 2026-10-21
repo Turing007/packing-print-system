@@ -36,7 +36,7 @@ import os, tempfile, webbrowser
 from datetime import datetime
 from decimal import Decimal
 from product import Product, ProductStore, format_box_sizes
-from packing import calculate_boxes, generate_box_label_html, generate_individual_box_labels_html, BoxLabel, merge_selected_boxes as merge_tail_boxes
+from packing import calculate_boxes, generate_box_label_html, generate_individual_box_labels_html, BoxLabel, merge_selected_boxes as merge_tail_boxes, format_recipient
 from storage import save_packing, load_current_packing, clear_current_packing, get_packing_history, delete_history_record, save_print_log, get_combined_history, get_packing_history_by_id, save_order_to_history, load_order_history, delete_order_history, load_order_history_column_widths, save_order_history_column_widths
 import storage
 import supplier
@@ -218,12 +218,12 @@ class PackingApp:
 
         pkf = ttk.Frame(pk_frame)
         pkf.pack(fill=tk.BOTH, expand=True)
-        pkcols = ("recipient","order","name","sku","spec","qty","per")
+        pkcols = ("recipient","line_no","order","name","sku","spec","qty","per")
         self.pktree = ttk.Treeview(pkf, columns=pkcols, show="headings", height=8)
-        pkhdrs = ["收件人","订单号","品名","SKU","规格","总数","装箱数"]
+        pkhdrs = ["收件人","行号","订单号","品名","SKU","规格","总数","装箱数"]
         for i,h in enumerate(pkhdrs):
             self.pktree.heading(pkcols[i], text=h)
-        pkw = [80,100,120,70,60,60,60]
+        pkw = [80,50,100,120,70,60,60,60]
         for i,w in enumerate(pkw):
             self.pktree.column(pkcols[i], width=w, minwidth=40)
         pkvsb = ttk.Scrollbar(pkf, orient=tk.VERTICAL, command=self.pktree.yview)
@@ -346,6 +346,10 @@ class PackingApp:
         self.e_pk_recipient = ttk.Entry(row1, width=18)
         self.e_pk_recipient.pack(side=tk.LEFT, padx=5)
         self.e_pk_recipient.bind("<KeyRelease>", self._on_recipient_order_change)
+        ttk.Label(row1, text="行号:").pack(side=tk.LEFT, padx=(5,0))
+        self.e_pk_line_no = ttk.Entry(row1, width=8)
+        self.e_pk_line_no.pack(side=tk.LEFT, padx=5)
+        self.e_pk_line_no.bind("<KeyRelease>", self._on_recipient_order_change)
         ttk.Label(row1, text="订单编号:").pack(side=tk.LEFT, padx=(10,0))
         self.e_pk_order = ttk.Entry(row1, width=22)
         self.e_pk_order.pack(side=tk.LEFT, padx=5)
@@ -1023,7 +1027,7 @@ class PackingApp:
             self.pktree.delete(i)
         for i, item in enumerate(self.packing_items):
             self.pktree.insert("",tk.END,iid=str(i),values=(
-                item["recipient"], item["order"], item["name"],
+                item["recipient"], item.get("line_no",""), item["order"], item["name"],
                 item["sku"], item.get("spec",""), item["qty"], format_box_sizes(item.get("per", 1))
             ))
         self.update_status()
@@ -1037,6 +1041,8 @@ class PackingApp:
                 item = self.packing_items[idx]
                 self.e_pk_recipient.delete(0,tk.END)
                 self.e_pk_recipient.insert(0,item.get("recipient",""))
+                self.e_pk_line_no.delete(0,tk.END)
+                self.e_pk_line_no.insert(0,item.get("line_no",""))
                 self.e_pk_order.delete(0,tk.END)
                 self.e_pk_order.insert(0,item.get("order",""))
                 self.e_pk_qty.delete(0,tk.END)
@@ -1081,6 +1087,7 @@ class PackingApp:
 
         found = self.selected_prod_for_packing
         recipient = self.e_pk_recipient.get().strip()
+        line_no = self.e_pk_line_no.get().strip()
         order = self.e_pk_order.get().strip()
         try:
             qty = int(self.e_pk_qty.get().strip() or 0)
@@ -1095,6 +1102,7 @@ class PackingApp:
         item = {
             "name": found.name, "sku": found.sku, "per": format_box_sizes(found.qty_per_box), "spec": found.spec,
             "recipient": recipient, "order": order, "qty": qty,
+            "line_no": line_no,
             "remark": self.e_pk_remark.get().strip()
         }
 
@@ -1122,6 +1130,7 @@ class PackingApp:
         if not self.packing_items:
             # 没有装箱项目，只清空表单
             self.e_pk_recipient.delete(0,tk.END)
+            self.e_pk_line_no.delete(0,tk.END)
             self.e_pk_order.delete(0,tk.END)
             self.e_pk_qty.delete(0,tk.END)
             return
@@ -1135,7 +1144,8 @@ class PackingApp:
             groups[key].append(item)
 
         for (recipient, order), items in groups.items():
-            save_order_to_history(recipient, order, items, self.e_order_remark.get().strip())
+            line_no = next((i.get("line_no", "") for i in items if i.get("line_no", "")), "")
+            save_order_to_history(recipient, order, items, self.e_order_remark.get().strip(), line_no)
 
         self.packing_items = []
         self.current_boxes = []
@@ -1144,6 +1154,7 @@ class PackingApp:
         self.refresh_box_table()
         self.refresh_order_history()
         self.e_pk_recipient.delete(0,tk.END)
+        self.e_pk_line_no.delete(0,tk.END)
         self.e_pk_order.delete(0,tk.END)
         self.e_pk_qty.delete(0,tk.END)
         self.e_pk_remark.delete(0,tk.END)
@@ -1159,6 +1170,7 @@ class PackingApp:
             messagebox.showwarning("提示","请先在左侧产品列表中选择一个产品")
             return
         recipient = self.e_pk_recipient.get().strip()
+        line_no = self.e_pk_line_no.get().strip()
         order = self.e_pk_order.get().strip()
         try:
             qty = int(self.e_pk_qty.get().strip() or 0)
@@ -1172,6 +1184,7 @@ class PackingApp:
         item = {
             "name": found.name, "sku": found.sku, "per": format_box_sizes(found.qty_per_box), "spec": found.spec,
             "recipient": recipient, "order": order, "qty": qty,
+            "line_no": line_no,
             "remark": self.e_pk_remark.get().strip()
         }
         if 0 <= self.selected_packing_index < len(self.packing_items):
@@ -1184,6 +1197,7 @@ class PackingApp:
         self.current_boxes = []
         self.selected_packing_index = None
         self.e_pk_recipient.delete(0,tk.END)
+        self.e_pk_line_no.delete(0,tk.END)
         self.e_pk_order.delete(0,tk.END)
         self.e_pk_qty.delete(0,tk.END)
         self.e_pk_remark.delete(0,tk.END)
@@ -1217,7 +1231,8 @@ class PackingApp:
                 spec=item.get("spec",""),
                 recipient=item["recipient"],
                 order_no=item["order"],
-                remark=item.get("remark", "")
+                remark=item.get("remark", ""),
+                line_no=item.get("line_no", "")
             ))
         self.current_boxes = calculate_boxes(temp_products, self.merge_tail.get(), self.e_order_remark.get().strip())
         self.refresh_box_table()
@@ -1230,7 +1245,7 @@ class PackingApp:
         for box_index, box in enumerate(self.current_boxes):
             if box.is_tail:
                 item_id = self.btree.insert("", tk.END, values=(
-                    box.recipient or "-",
+                    box.display_recipient or "-",
                     box.product_name,
                     box.product_sku,
                     box.spec or "",
@@ -1243,9 +1258,9 @@ class PackingApp:
                 self.box_row_indexes[item_id] = [box_index]
                 continue
 
-            key = (box.recipient, box.product_name, box.product_sku, box.spec, box.qty_per_box, box.is_tail)
+            key = (box.recipient, box.line_no, box.product_name, box.product_sku, box.spec, box.qty_per_box, box.is_tail)
             if key not in groups:
-                groups[key] = {"r":box.recipient,"n":box.product_name,"s":box.product_sku,"sp":box.spec,"p":box.qty_per_box,"t":box.is_tail,"c":0,"q":0,"m":box.remark,"rep":box_index}
+                groups[key] = {"r":box.display_recipient,"n":box.product_name,"s":box.product_sku,"sp":box.spec,"p":box.qty_per_box,"t":box.is_tail,"c":0,"q":0,"m":box.remark,"rep":box_index}
             groups[key]["c"] += 1
             groups[key]["q"] += box.quantity_in_box
         for g in groups.values():
@@ -1304,7 +1319,8 @@ class PackingApp:
                 name=item["name"], sku=item["sku"], quantity=item["qty"],
                 qty_per_box=item["per"], spec=item.get("spec", ""),
                 recipient=item["recipient"], order_no=item["order"],
-                remark=item.get("remark", "")
+                remark=item.get("remark", ""),
+                line_no=item.get("line_no", "")
             ))
         rid = save_packing(temp_products, self.current_boxes, self.merge_tail.get(), order_remark=self.e_order_remark.get().strip())
         messagebox.showinfo("成功", f"装箱数据已暂存 (ID: {rid})")
@@ -1327,6 +1343,7 @@ class PackingApp:
                     "recipient": pd.get("recipient",""),
                     "order": pd.get("order_no",""),
                     "qty": pd.get("quantity",0),
+                    "line_no": pd.get("line_no",""),
                     "remark": pd.get("remark", "")
                 })
         self.merge_tail.set(record.merge_tail)
@@ -1345,11 +1362,14 @@ class PackingApp:
             return
         new_recipient = self.e_pk_recipient.get().strip()
         new_order = self.e_pk_order.get().strip()
+        new_line_no = self.e_pk_line_no.get().strip()
         changed = False
         for item in self.packing_items:
-            if item.get("recipient","") != new_recipient or item.get("order","") != new_order:
+            if (item.get("recipient","") != new_recipient or item.get("order","") != new_order
+                    or item.get("line_no","") != new_line_no):
                 item["recipient"] = new_recipient
                 item["order"] = new_order
+                item["line_no"] = new_line_no
                 changed = True
         if changed:
             self.refresh_packing_table()
@@ -1392,7 +1412,8 @@ class PackingApp:
                 spec=item.get("spec",""),
                 recipient=item["recipient"],
                 order_no=item["order"],
-                remark=item.get("remark", "")
+                remark=item.get("remark", ""),
+                line_no=item.get("line_no", "")
             ))
         return len(calculate_boxes(temp_products, self.merge_tail.get(), self.e_order_remark.get().strip()))
 
@@ -1432,7 +1453,8 @@ class PackingApp:
                 name=item["name"], sku=item["sku"], quantity=item["qty"],
                 qty_per_box=item["per"], spec=item.get("spec", ""),
                 recipient=item["recipient"], order_no=item["order"],
-                remark=item.get("remark", "")
+                remark=item.get("remark", ""),
+                line_no=item.get("line_no", "")
             ))
         rid = save_packing(temp_products, self.current_boxes, self.merge_tail.get(), order_remark=self.e_order_remark.get().strip())
         save_print_log(rid)
@@ -1491,7 +1513,7 @@ class PackingApp:
             bt = "尾数" if box.is_tail else "整箱"
             tree.insert("", tk.END, iid=str(idx), values=(
                 "", box.box_number, box.total_boxes, box.product_name,
-                box.product_sku, box.quantity_in_box, box.recipient or "-",
+                box.product_sku, box.quantity_in_box, box.display_recipient or "-",
                 box.order_no or "-", bt
             ))
         
@@ -1526,7 +1548,8 @@ class PackingApp:
                     name=item["name"], sku=item["sku"], quantity=item["qty"],
                     qty_per_box=item["per"], spec=item.get("spec", ""),
                     recipient=item["recipient"], order_no=item["order"],
-                    remark=item.get("remark", "")
+                    remark=item.get("remark", ""),
+                    line_no=item.get("line_no", "")
                 ))
             rid = save_packing(temp_products, self.current_boxes, self.merge_tail.get(), order_remark=self.e_order_remark.get().strip())
             save_print_log(rid)
@@ -1602,7 +1625,7 @@ class PackingApp:
         recs = set()
         for b in boxes_data:
             if isinstance(b, dict) and b.get('recipient'):
-                recs.add(b['recipient'])
+                recs.add(format_recipient(b.get('recipient', ''), b.get('line_no', '')))
         if recs:
             info += f"   收件人: {','.join(recs)}"
         ttk.Label(win,text=info,font=("Microsoft YaHei",10)).pack(anchor=tk.W,padx=10,pady=8)
@@ -1612,7 +1635,7 @@ class PackingApp:
         pt.pack(fill=tk.X,padx=10,pady=2)
         for p in record.get("products",[]):
             if isinstance(p,dict):
-                pt.insert(tk.END,f"  {p.get('name','')} | SKU: {p.get('sku','')} | 收件人: {p.get('recipient','')} | 订单: {p.get('order_no','')} | 总数: {p.get('quantity',0)} | 每箱: {p.get('qty_per_box',0)}\n")
+                pt.insert(tk.END,f"  {p.get('name','')} | SKU: {p.get('sku','')} | 收件人: {format_recipient(p.get('recipient',''), p.get('line_no',''))} | 订单: {p.get('order_no','')} | 总数: {p.get('quantity',0)} | 每箱: {p.get('qty_per_box',0)}\n")
         pt.config(state=tk.DISABLED)
         
         ttk.Label(win,text="箱唛清单:",font=("Microsoft YaHei",10,"bold")).pack(anchor=tk.W,padx=10)
@@ -1700,7 +1723,8 @@ class PackingApp:
             n_items = len(h.get("items", []))
             parent_id = f"oh_{original_idx}"
             self.ohtree.insert("", tk.END, iid=parent_id, values=(
-                h["recipient"], h["order_no"], n_items, h["created_at"])
+                format_recipient(h.get("recipient", ""), h.get("line_no", "")),
+                h["order_no"], n_items, h["created_at"])
             )
 
             for item in h.get("items", []):
@@ -1732,6 +1756,7 @@ class PackingApp:
                     "per":format_box_sizes(item.get("per", 1)),"spec":item.get("spec",""),
                     "recipient":h["recipient"],
                     "order":h["order_no"],"qty":item["qty"],
+                    "line_no":h.get("line_no", ""),
                     "remark":item.get("remark", ""),
                     "order_remark":h.get("order_remark", "")})
         if not new_items:
@@ -1742,6 +1767,8 @@ class PackingApp:
         if new_items:
             self.e_pk_recipient.delete(0,tk.END)
             self.e_pk_recipient.insert(0,new_items[0].get("recipient",""))
+            self.e_pk_line_no.delete(0,tk.END)
+            self.e_pk_line_no.insert(0,new_items[0].get("line_no",""))
             self.e_pk_order.delete(0,tk.END)
             self.e_pk_order.insert(0,new_items[0].get("order",""))
             self.e_order_remark.delete(0, tk.END)
@@ -1772,7 +1799,8 @@ class PackingApp:
                     quantity=item["qty"], qty_per_box=item["per"],
                     spec=item.get("spec",""),
                     recipient=h["recipient"], order_no=h["order_no"],
-                    remark=item.get("remark", "")))
+                    remark=item.get("remark", ""),
+                    line_no=h.get("line_no", "")))
         if not temp_products:
             messagebox.showinfo("提示","没有可计算的订单数据")
             return
