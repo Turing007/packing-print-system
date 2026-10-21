@@ -376,3 +376,35 @@ def save_order_history_column_widths(widths: dict):
     config = _load_json(UI_CONFIG_FILE, {}) or {}
     config["order_history_column_widths"] = {key: int(value) for key, value in widths.items()}
     _save_json(UI_CONFIG_FILE, config)
+
+
+RECENT_RECIPIENTS_LIMIT = 30
+
+
+def load_recent_recipients() -> list:
+    """最近输入过的收件人（最新在前）。属于便捷缓存，损坏时回退为空。"""
+    config = _load_json(UI_CONFIG_FILE, {}) or {}
+    values = config.get("recent_recipients", [])
+    if not isinstance(values, list):
+        return []
+    result = []
+    for value in values:
+        name = str(value or "").strip()
+        if name and name not in result:
+            result.append(name)
+    return result
+
+
+def remember_recipient(name: str) -> list:
+    """记录收件人到最近使用列表，返回更新后的列表。"""
+    name = str(name or "").strip()
+    recipients = load_recent_recipients()
+    if not name:
+        return recipients
+    recipients = [r for r in recipients if r != name]
+    recipients.insert(0, name)
+    recipients = recipients[:RECENT_RECIPIENTS_LIMIT]
+    config = _load_json(UI_CONFIG_FILE, {}) or {}
+    config["recent_recipients"] = recipients
+    _save_json(UI_CONFIG_FILE, config)
+    return recipients

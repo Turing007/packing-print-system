@@ -130,6 +130,7 @@ class PackingApp:
         self.refresh_packing_table()
 
         self.refresh_bom_products()
+        self.refresh_recipient_candidates()
         self.refresh_order_history()
         # 自动更新：菜单 + 后台静默检测
         self._update_state = {"pending_info": None, "busy": False}
@@ -343,8 +344,9 @@ class PackingApp:
         row1 = ttk.Frame(inf)
         row1.pack(fill=tk.X, pady=2)
         ttk.Label(row1, text="收件人:").pack(side=tk.LEFT)
-        self.e_pk_recipient = ttk.Entry(row1, width=18)
+        self.e_pk_recipient = ttk.Combobox(row1, width=18)
         self.e_pk_recipient.pack(side=tk.LEFT, padx=5)
+        self.e_pk_recipient.bind("<<ComboboxSelected>>", self._on_recipient_selected)
         self.e_pk_recipient.bind("<KeyRelease>", self._on_recipient_order_change)
         ttk.Label(row1, text="行号:").pack(side=tk.LEFT, padx=(5,0))
         self.e_pk_line_no = ttk.Entry(row1, width=8)
@@ -1122,6 +1124,7 @@ class PackingApp:
 
         self.packing_items.append(item)
         self.refresh_packing_table()
+        self._remember_recipient(recipient)
         # 只清空数量，收件人和订单保留
         self.e_pk_qty.delete(0,tk.END)
 
@@ -1146,6 +1149,7 @@ class PackingApp:
         for (recipient, order), items in groups.items():
             line_no = next((i.get("line_no", "") for i in items if i.get("line_no", "")), "")
             save_order_to_history(recipient, order, items, self.e_order_remark.get().strip(), line_no)
+            self._remember_recipient(recipient)
 
         self.packing_items = []
         self.current_boxes = []
@@ -1190,6 +1194,7 @@ class PackingApp:
         if 0 <= self.selected_packing_index < len(self.packing_items):
             self.packing_items[self.selected_packing_index] = item
             self.refresh_packing_table()
+            self._remember_recipient(recipient)
             self.e_pk_qty.delete(0,tk.END)
 
     def clear_packing_items(self):
@@ -1353,6 +1358,40 @@ class PackingApp:
         self.refresh_packing_table()
         self.refresh_box_table()
         messagebox.showinfo("成功","已读取暂存数据")
+
+    def _on_recipient_selected(self, event=None):
+        """从下拉选中收件人：只回填收件人，订单号和行号保持当前输入。"""
+        self._on_recipient_order_change()
+
+    def refresh_recipient_candidates(self):
+        """收件人下拉候选 = 最近输入过的 + 订单历史里的，最近使用的排前面。"""
+        try:
+            recent = storage.load_recent_recipients()
+        except Exception:
+            recent = []
+        candidates = list(recent)
+        seen = set(candidates)
+        history = load_order_history()
+        for record in reversed(history):
+            name = str(record.get("recipient", "") or "").strip()
+            if name and name not in seen:
+                seen.add(name)
+                candidates.append(name)
+        current = self.e_pk_recipient.get()
+        self.e_pk_recipient.configure(values=candidates)
+        if current != self.e_pk_recipient.get():
+            self.e_pk_recipient.set(current)
+
+    def _remember_recipient(self, recipient):
+        """把实际用过的收件人记入候选，下次可直接选。"""
+        recipient = (recipient or "").strip()
+        if not recipient:
+            return
+        try:
+            storage.remember_recipient(recipient)
+        except Exception:
+            return
+        self.refresh_recipient_candidates()
 
     def _on_recipient_order_change(self, event=None):
         """收件人/订单号变化时，同步更新所有装箱项目的对应字段"""
