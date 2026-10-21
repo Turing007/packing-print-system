@@ -68,6 +68,24 @@ class RecentRecipientsTest(unittest.TestCase):
         self.assertEqual(widths, {"#0": 28, "recipient": 95})
         self.assertEqual(load_recent_recipients(), ["张三"])
 
+    def test_legacy_recipients_with_line_numbers_are_not_reused(self):
+        """旧候选把行号写在收件人里，升级后必须失效，只积累新收件人。"""
+        import json
+        import os
+
+        path = os.path.join(self._temp_dir.name, "ui_config.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"recent_recipients": ["郑金玲（501）", "张三（7）"]}, f, ensure_ascii=False)
+
+        self.assertEqual(load_recent_recipients(), [])
+
+        remember_recipient("李四")
+
+        self.assertEqual(load_recent_recipients(), ["李四"])
+        with open(path, encoding="utf-8") as f:
+            config = json.load(f)
+        self.assertNotIn("recent_recipients", config)
+
 
 if __name__ == "__main__":
     unittest.main()

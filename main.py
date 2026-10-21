@@ -1364,19 +1364,15 @@ class PackingApp:
         self._on_recipient_order_change()
 
     def refresh_recipient_candidates(self):
-        """收件人下拉候选 = 最近输入过的 + 订单历史里的，最近使用的排前面。"""
+        """收件人下拉候选只取此后实际用过的收件人（最新在前）。
+
+        不复用订单历史里的收件人：旧记录把行号写在收件人文本里，
+        直接选用会把行号带进新订单。
+        """
         try:
-            recent = storage.load_recent_recipients()
+            candidates = storage.load_recent_recipients()
         except Exception:
-            recent = []
-        candidates = list(recent)
-        seen = set(candidates)
-        history = load_order_history()
-        for record in reversed(history):
-            name = str(record.get("recipient", "") or "").strip()
-            if name and name not in seen:
-                seen.add(name)
-                candidates.append(name)
+            candidates = []
         current = self.e_pk_recipient.get()
         self.e_pk_recipient.configure(values=candidates)
         if current != self.e_pk_recipient.get():

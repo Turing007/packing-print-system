@@ -379,12 +379,16 @@ def save_order_history_column_widths(widths: dict):
 
 
 RECENT_RECIPIENTS_LIMIT = 30
+# v2：行号从收件人文本中独立后，旧候选（收件人自带行号）不能再直接复用，
+# 换 key 让旧列表自然失效，只积累此后的收件人。
+RECENT_RECIPIENTS_KEY = "recent_recipients_v2"
+_LEGACY_RECIPIENTS_KEY = "recent_recipients"
 
 
 def load_recent_recipients() -> list:
     """最近输入过的收件人（最新在前）。属于便捷缓存，损坏时回退为空。"""
     config = _load_json(UI_CONFIG_FILE, {}) or {}
-    values = config.get("recent_recipients", [])
+    values = config.get(RECENT_RECIPIENTS_KEY, [])
     if not isinstance(values, list):
         return []
     result = []
@@ -405,6 +409,7 @@ def remember_recipient(name: str) -> list:
     recipients.insert(0, name)
     recipients = recipients[:RECENT_RECIPIENTS_LIMIT]
     config = _load_json(UI_CONFIG_FILE, {}) or {}
-    config["recent_recipients"] = recipients
+    config.pop(_LEGACY_RECIPIENTS_KEY, None)
+    config[RECENT_RECIPIENTS_KEY] = recipients
     _save_json(UI_CONFIG_FILE, config)
     return recipients
