@@ -721,7 +721,7 @@ body {
     border-bottom: 1.5px solid #222; padding-bottom: 1.5mm; margin-bottom: 2mm;
 }
 .l-title { font-size: 10pt; font-weight: bold; letter-spacing: 2px; }
-.l-tail-badge { font-size: 7pt; background: #e67e22; color: #000; padding: 1px 4px; border-radius: 2px; }
+.l-tail-badge { font-size: 13pt; font-weight: bold; background: #e67e22; color: #000; padding: 1mm 3mm; border-radius: 2px; letter-spacing: 2px; }
 .l-row { display: flex; margin-bottom: 1.5px; font-size: 8pt; }
 .l-label { color: #000; width: 20mm; flex-shrink: 0; font-size: 11pt; }
 .l-value { font-weight: bold; font-size: 13.5pt; color: #000; }
@@ -735,7 +735,7 @@ body {
 .l-sku-group + .l-sku-group { margin-top: 3mm; }
 .l-product-remark-row td { font-size: 7.5pt; font-weight: normal; text-align: left; padding: 0.8mm 1.5mm; }
 .l-product-remark { font-size: 7.5pt; font-weight: normal; text-align: left; padding: 0.8mm 1.5mm; }
-.l-order-remark { border-top: 1px solid #999; padding-top: 1mm; margin-top: auto; font-size: 7pt; text-align: left; overflow-wrap: anywhere; }
+.l-order-remark { border-top: 1px solid #999; padding-top: 1mm; margin-top: auto; font-size: 11pt; font-weight: bold; text-align: left; overflow-wrap: anywhere; }
 .l-footer { border-top: 1px solid #ddd; padding-top: 1mm; margin-top: 1mm; font-size: 6.5pt; color: #000; text-align: right; }
 @media print {
     body { background: #fff; padding: 0; margin: 0; }
