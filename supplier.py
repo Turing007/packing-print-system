@@ -83,7 +83,8 @@ def _normalize_component(component: dict) -> dict:
         "supplier": supplier_name,
         "supplier_product": product_name,
         "supplier_sku": str(component.get("supplier_sku", "") or "").strip(),
-        "plug": str(component.get("plug", "") or "").strip(),
+        "plug": "" if component.get("is_accessory") else str(component.get("plug", "") or "").strip(),
+        "is_accessory": bool(component.get("is_accessory")),
         "usage_qty": float(usage),
         "remark": str(component.get("remark", "") or "").strip(),
     }
@@ -222,8 +223,9 @@ class SupplierBomStore:
             normalized = _normalize_component(component)
             mapping = self._ensure_mapping(key, customer)
             signature = (normalized["supplier"], normalized["supplier_product"],
-                         normalized["supplier_sku"], normalized["plug"])
-            existing = {(c["supplier"], c["supplier_product"], c["supplier_sku"], c.get("plug", ""))
+                         normalized["supplier_sku"], normalized["plug"], normalized["is_accessory"])
+            existing = {(c["supplier"], c["supplier_product"], c["supplier_sku"],
+                         c.get("plug", ""), bool(c.get("is_accessory")))
                         for c in mapping["components"]}
             if signature in existing:
                 skipped += 1
@@ -284,12 +286,14 @@ class SupplierBomStore:
             old["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         else:
             existing = {
-                (c["supplier"], c["supplier_product"], c["supplier_sku"], c.get("plug", ""))
+                (c["supplier"], c["supplier_product"], c["supplier_sku"],
+                 c.get("plug", ""), bool(c.get("is_accessory")))
                 for c in target["components"]
             }
             for component in old["components"]:
                 signature = (component["supplier"], component["supplier_product"],
-                             component["supplier_sku"], component.get("plug", ""))
+                             component["supplier_sku"], component.get("plug", ""),
+                             bool(component.get("is_accessory")))
                 if signature not in existing:
                     target["components"].append(component)
                     existing.add(signature)
@@ -346,11 +350,13 @@ def build_requirement(items: list, store: SupplierBomStore) -> dict:
         for component in components:
             usage = Decimal(str(component.get("usage_qty", 1)))
             plug = str(component.get("plug", "") or "").strip()
+            is_accessory = bool(component.get("is_accessory"))
             row_key = (
                 component["supplier"].strip(),
                 component["supplier_product"].strip(),
                 str(component.get("supplier_sku", "") or "").strip(),
                 plug,
+                is_accessory,
             )
             row = grouped.get(row_key)
             if row is None:
@@ -359,6 +365,7 @@ def build_requirement(items: list, store: SupplierBomStore) -> dict:
                     "supplier_product": row_key[1],
                     "supplier_sku": row_key[2],
                     "plug": row_key[3],
+                    "is_accessory": row_key[4],
                     "quantity": Decimal("0"),
                     "sources": [],
                 }
@@ -404,8 +411,26 @@ def requirement_line(row: dict) -> str:
 
 
 def supplier_text(rows: list) -> str:
-    """一家供应商的全部备货内容：各款之间用「，」连接。"""
-    return "，".join(requirement_line(row) for row in rows)
+    """一家供应商的全部备货内容。
+
+    同名同货号的产品只写一次名称，后续只追加「插脚*数量」，
+    例如「老款外箱得伟脚*40米沃奇脚*40」；不同产品之间用「，」连接。
+    """
+    order = []
+    groups = {}
+    for row in rows:
+        name = row["supplier_product"]
+        if name not in groups:
+            groups[name] = []
+            order.append(name)
+        groups[name].append(row)
+    parts = []
+    for name in order:
+        suffix = "".join(
+            f"{row.get('plug', '')}*{format_quantity(row['quantity'])}" for row in groups[name]
+        )
+        parts.append(f"{name}{suffix}")
+    return "，".join(parts)
 
 
 def generate_requirement_html(result: dict) -> str:

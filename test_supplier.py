@@ -275,6 +275,44 @@ class PlugTest(unittest.TestCase):
         rows = [row, {"supplier_product": "有刷包胶小吹", "plug": "得伟脚", "quantity": Decimal("1")}]
         self.assertEqual(supplier.supplier_text(rows), "干湿吸尘器米沃奇脚*2，有刷包胶小吹得伟脚*1")
 
+    def test_supplier_text_omits_repeated_name_for_same_product(self):
+        rows = [
+            {"supplier_product": "老款振动器+放棒子的纸盒外箱", "supplier_sku": "",
+             "plug": "得伟脚", "quantity": Decimal("40")},
+            {"supplier_product": "老款振动器+放棒子的纸盒外箱", "supplier_sku": "",
+             "plug": "米沃奇脚", "quantity": Decimal("40")},
+            {"supplier_product": "彩盒", "supplier_sku": "", "plug": "", "quantity": Decimal("5")},
+        ]
+        self.assertEqual(
+            supplier.supplier_text(rows),
+            "老款振动器+放棒子的纸盒外箱得伟脚*40米沃奇脚*40，彩盒*5")
+
+    def test_accessory_has_no_plug_and_merges_across_specs(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            store = SupplierBomStore(data_dir)
+            customer_mt = {"name": "28电锤", "sku": "HAMMER-MT", "spec": "MT"}
+            customer_de = {"name": "28电锤", "sku": "HAMMER-DE", "spec": "DE"}
+            key_mt = product_key(**customer_mt)
+            key_de = product_key(**customer_de)
+            store.add_component(key_mt, customer_mt, {
+                "supplier": "包装厂", "supplier_product": "彩盒", "plug": "牧田脚",
+                "is_accessory": True})
+            store.add_component(key_de, customer_de, {
+                "supplier": "包装厂", "supplier_product": "彩盒", "is_accessory": True})
+
+            components = store.get_components(key_mt)
+            self.assertTrue(components[0]["is_accessory"])
+            self.assertEqual(components[0]["plug"], "")
+
+            result = build_requirement([
+                {"name": "28电锤", "sku": "HAMMER-MT", "spec": "MT", "qty": 2},
+                {"name": "28电锤", "sku": "HAMMER-DE", "spec": "DE", "qty": 3},
+            ], store)
+            self.assertEqual(len(result["rows"]), 1)
+            self.assertEqual(result["rows"][0]["quantity"], Decimal("5"))
+            self.assertEqual(result["rows"][0]["plug"], "")
+            self.assertEqual(supplier.requirement_line(result["rows"][0]), "彩盒*5")
+
     def test_same_product_with_different_plugs_stays_separate(self):
         with tempfile.TemporaryDirectory() as data_dir:
             store = SupplierBomStore(data_dir)

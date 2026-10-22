@@ -538,13 +538,18 @@ class PackingApp:
 
         bom_bf = ttk.Frame(bom_form)
         bom_bf.grid(row=3,column=0,columnspan=4,pady=(8,0))
-        ttk.Button(bom_bf,text="新增",command=self.add_bom_component,width=8).pack(side=tk.LEFT,padx=2)
-        ttk.Button(bom_bf,text="批量新增",command=self.batch_add_bom_components,width=10).pack(side=tk.LEFT,padx=2)
+        self.bom_accessory = tk.BooleanVar(value=False)
+        ttk.Checkbutton(bom_bf, text="配件（不分规格，无插脚）", variable=self.bom_accessory,
+                        command=self._on_bom_accessory_toggle).pack(side=tk.LEFT, padx=(0, 10))
         self.bom_auto_plug = tk.BooleanVar(value=True)
-        ttk.Checkbutton(bom_bf, text="批量时插脚按规格自动带出", variable=self.bom_auto_plug).pack(side=tk.LEFT, padx=(2,6))
-        ttk.Button(bom_bf,text="修改",command=self.update_bom_component,width=8).pack(side=tk.LEFT,padx=2)
-        ttk.Button(bom_bf,text="删除",command=self.delete_bom_component,width=8).pack(side=tk.LEFT,padx=2)
-        ttk.Button(bom_bf,text="清空",command=self.clear_bom_form,width=8).pack(side=tk.LEFT,padx=2)
+        ttk.Checkbutton(bom_bf, text="批量时插脚按规格自动带出", variable=self.bom_auto_plug).pack(side=tk.LEFT)
+        bom_bf2 = ttk.Frame(bom_form)
+        bom_bf2.grid(row=4,column=0,columnspan=4,pady=(8,0))
+        ttk.Button(bom_bf2,text="新增",command=self.add_bom_component,width=8).pack(side=tk.LEFT,padx=2)
+        ttk.Button(bom_bf2,text="批量新增",command=self.batch_add_bom_components,width=10).pack(side=tk.LEFT,padx=2)
+        ttk.Button(bom_bf2,text="修改",command=self.update_bom_component,width=8).pack(side=tk.LEFT,padx=2)
+        ttk.Button(bom_bf2,text="删除",command=self.delete_bom_component,width=8).pack(side=tk.LEFT,padx=2)
+        ttk.Button(bom_bf2,text="清空",command=self.clear_bom_form,width=8).pack(side=tk.LEFT,padx=2)
         bom_form.grid_columnconfigure(1, weight=1)
         bom_form.grid_columnconfigure(3, weight=1)
 
@@ -750,7 +755,7 @@ class PackingApp:
         for index, component in enumerate(components):
             self.bom_ctree.insert("", tk.END, iid=str(index), values=(
                 component["supplier"], component["supplier_product"],
-                component.get("plug", ""),
+                "配件" if component.get("is_accessory") else component.get("plug", ""),
                 component.get("supplier_sku", ""),
                 supplier.format_quantity(component.get("usage_qty", 1)),
                 component.get("remark", ""),
@@ -772,6 +777,8 @@ class PackingApp:
         self.e_bom_sku.delete(0, tk.END)
         self.e_bom_sku.insert(0, component.get("supplier_sku", ""))
         self.e_bom_plug.set(component.get("plug", ""))
+        self.bom_accessory.set(bool(component.get("is_accessory")))
+        self._on_bom_accessory_toggle()
         self.e_bom_usage.delete(0, tk.END)
         self.e_bom_usage.insert(0, supplier.format_quantity(component.get("usage_qty", 1)))
         self.e_bom_remark.delete(0, tk.END)
@@ -796,12 +803,23 @@ class PackingApp:
             "supplier_product": product_name,
             "supplier_sku": self.e_bom_sku.get().strip(),
             "plug": self.e_bom_plug.get().strip(),
+            "is_accessory": self.bom_accessory.get(),
             "usage_qty": float(usage),
             "remark": self.e_bom_remark.get().strip(),
         }
 
+    def _on_bom_accessory_toggle(self):
+        """配件不分规格，不显示插脚。"""
+        if self.bom_accessory.get():
+            self.e_bom_plug.set("")
+            self.e_bom_plug.configure(state="disabled")
+        else:
+            self.e_bom_plug.configure(state="normal")
+
     def clear_bom_form(self, clear_supplier_values=True):
         self.bom_selected_component = None
+        self.bom_accessory.set(False)
+        self.e_bom_plug.configure(state="normal")
         self.e_bom_product.delete(0, tk.END)
         self.e_bom_sku.delete(0, tk.END)
         self.e_bom_plug.set("")
@@ -848,11 +866,13 @@ class PackingApp:
             found = rows_by_key.get(key)
             if not found:
                 continue
-            if auto_plug:
+            if component["is_accessory"]:
+                plug = ""
+            elif auto_plug:
                 plug = supplier.plug_for_spec(found["spec"]) or component["plug"]
             else:
                 plug = component["plug"]
-            if not plug:
+            if not plug and not component["is_accessory"]:
                 missing_plug.append(found["name"] + (f"（{found['spec']}）" if found["spec"] else ""))
             entries.append((key, {"name": found["name"], "sku": found["sku"], "spec": found["spec"]},
                             dict(component, plug=plug)))
@@ -1062,6 +1082,8 @@ class PackingApp:
                    command=lambda: self.export_requirement_csv(result)).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="复制选中", width=12,
                    command=lambda: self.copy_selected_requirement(tree, row_by_iid, supplier_by_iid)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(buttons, text="复制本供应商", width=14,
+                   command=lambda: self.copy_supplier_requirement(tree, supplier_by_iid)).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="复制全部", width=12,
                    command=lambda: self.copy_requirement(result)).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="关闭", width=10, command=win.destroy).pack(side=tk.RIGHT, padx=2)
@@ -1102,6 +1124,22 @@ class PackingApp:
         self.root.clipboard_append("\n".join(lines))
         self.root.update()
         messagebox.showinfo("已复制", "已复制到剪贴板，可直接粘贴发送给供应商。")
+
+    def copy_supplier_requirement(self, tree, supplier_by_iid):
+        """复制选中产品所属供应商的全部备货内容。"""
+        sel = tree.selection()
+        if not sel:
+            messagebox.showinfo("提示", "请先选中该供应商下的任意产品（或供应商行）")
+            return
+        iid = sel[0]
+        parent = iid if iid in supplier_by_iid else tree.parent(iid)
+        rows = supplier_by_iid.get(parent)
+        if not rows:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(supplier.supplier_text(rows))
+        self.root.update()
+        messagebox.showinfo("已复制", "已复制该供应商的全部备货内容。")
 
     def copy_requirement(self, result):
         text = supplier.requirement_tsv_text(result)
