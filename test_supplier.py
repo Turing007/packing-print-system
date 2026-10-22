@@ -184,7 +184,7 @@ class RequirementOutputTest(unittest.TestCase):
         self.store = SupplierBomStore(self.tmp.name)
         key = product_key(**CUSTOMER_A)
         self.store.add_component(key, CUSTOMER_A,
-                                 {"supplier": "A厂", "supplier_product": "棘轮主体", "usage_qty": 1})
+                                 {"supplier": "A厂", "supplier_product": "棘轮主体", "plug": "牧田脚", "usage_qty": 1})
         self.store.add_component(key, CUSTOMER_A,
                                  {"supplier": "C厂", "supplier_product": "彩盒", "supplier_sku": "BOX", "usage_qty": 2})
         self.result = build_requirement(
@@ -213,13 +213,98 @@ class RequirementOutputTest(unittest.TestCase):
         self.assertTrue(raw.startswith(b"\xef\xbb\xbf"))
         text = raw.decode("utf-8-sig")
         self.assertIn("供应商产品名称", text)
+        self.assertIn("插脚", text)
+        self.assertIn("牧田脚", text)
         self.assertIn("PO1", text)
         self.assertIn("客户甲", text)
 
     def test_tsv_has_no_order_column(self):
         text = requirement_tsv_text(self.result)
-        self.assertIn("供应商\t供应商产品名称\t供应商货号\t备货数量", text)
+        self.assertIn("供应商\t供应商产品名称\t插脚\t供应商货号\t备货数量", text)
         self.assertNotIn("PO1", text)
+
+
+class PlugTest(unittest.TestCase):
+    def test_spec_maps_to_plug(self):
+        self.assertEqual(supplier.plug_for_spec("MT"), "牧田脚")
+        self.assertEqual(supplier.plug_for_spec("de"), "得伟脚")
+        self.assertEqual(supplier.plug_for_spec("MI"), "米沃奇脚")
+        self.assertEqual(supplier.plug_for_spec("XX"), "")
+
+    def test_component_plug_is_saved_and_updated(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            store = SupplierBomStore(data_dir)
+            key = product_key(**CUSTOMER_A)
+            store.add_component(key, CUSTOMER_A, {
+                "supplier": "A厂", "supplier_product": "棘轮主体", "plug": "牧田脚",
+            })
+            self.assertEqual(store.get_components(key)[0]["plug"], "牧田脚")
+
+            store.update_component(key, 0, CUSTOMER_A, {
+                "supplier": "A厂", "supplier_product": "棘轮主体", "plug": "得伟脚",
+            })
+            self.assertEqual(store.get_components(key)[0]["plug"], "得伟脚")
+
+    def test_batch_add_derives_plug_and_skips_duplicates(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            store = SupplierBomStore(data_dir)
+            customer_mt = {"name": "28电锤", "sku": "HAMMER-MT", "spec": "MT"}
+            customer_de = {"name": "28电锤", "sku": "HAMMER-DE", "spec": "DE"}
+            key_mt = product_key(**customer_mt)
+            key_de = product_key(**customer_de)
+
+            added, skipped = store.add_components([
+                (key_mt, customer_mt, {"supplier": "A厂", "supplier_product": "28电锤",
+                                       "plug": supplier.plug_for_spec("MT")}),
+                (key_de, customer_de, {"supplier": "A厂", "supplier_product": "28电锤",
+                                       "plug": supplier.plug_for_spec("DE")}),
+            ])
+            self.assertEqual((added, skipped), (2, 0))
+            self.assertEqual(store.get_components(key_mt)[0]["plug"], "牧田脚")
+            self.assertEqual(store.get_components(key_de)[0]["plug"], "得伟脚")
+
+            added, skipped = store.add_components([
+                (key_mt, customer_mt, {"supplier": "A厂", "supplier_product": "28电锤",
+                                       "plug": "牧田脚"}),
+            ])
+            self.assertEqual((added, skipped), (0, 1))
+
+    def test_requirement_line_format(self):
+        row = {"supplier_product": "干湿吸尘器", "plug": "米沃奇脚", "quantity": Decimal("2")}
+        self.assertEqual(supplier.requirement_line(row), "干湿吸尘器米沃奇脚*2")
+        rows = [row, {"supplier_product": "有刷包胶小吹", "plug": "得伟脚", "quantity": Decimal("1")}]
+        self.assertEqual(supplier.supplier_text(rows), "干湿吸尘器米沃奇脚*2，有刷包胶小吹得伟脚*1")
+
+    def test_same_product_with_different_plugs_stays_separate(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            store = SupplierBomStore(data_dir)
+            customer_mt = {"name": "28电锤", "sku": "HAMMER-MT", "spec": "MT"}
+            customer_de = {"name": "28电锤", "sku": "HAMMER-DE", "spec": "DE"}
+            key_mt = product_key(**customer_mt)
+            key_de = product_key(**customer_de)
+            store.add_component(key_mt, customer_mt, {
+                "supplier": "A厂", "supplier_product": "28电锤", "plug": "牧田脚"})
+            store.add_component(key_de, customer_de, {
+                "supplier": "A厂", "supplier_product": "28电锤", "plug": "得伟脚"})
+            result = build_requirement([
+                {"name": "28电锤", "sku": "HAMMER-MT", "spec": "MT", "qty": 2},
+                {"name": "28电锤", "sku": "HAMMER-DE", "spec": "DE", "qty": 3},
+            ], store)
+            rows = {(r["supplier_product"], r["plug"]): r for r in result["rows"]}
+            self.assertEqual(rows[("28电锤", "牧田脚")]["quantity"], Decimal("2"))
+            self.assertEqual(rows[("28电锤", "得伟脚")]["quantity"], Decimal("3"))
+            self.assertEqual(result["product_count"], 2)
+
+    def test_legacy_component_without_plug_stays_plain(self):
+        """旧映射没有插脚时保持为空，避免给彩盒等无插脚物料误加插脚。"""
+        with tempfile.TemporaryDirectory() as data_dir:
+            store = SupplierBomStore(data_dir)
+            key = product_key(**CUSTOMER_A)
+            store.add_component(key, CUSTOMER_A, {"supplier": "A厂", "supplier_product": "棘轮主体"})
+            result = build_requirement(
+                [{"name": "无刷棘轮扳手", "sku": "SEK-001", "spec": "MT", "qty": 2}], store)
+            self.assertEqual(result["rows"][0]["plug"], "")
+            self.assertEqual(supplier.requirement_line(result["rows"][0]), "棘轮主体*2")
 
 
 class ProductIdentityMigrationTest(unittest.TestCase):

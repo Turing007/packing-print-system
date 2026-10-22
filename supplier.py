@@ -17,6 +17,14 @@ from html import escape
 DATA_FILE = "supplier_bom.json"
 MAX_USAGE_DECIMALS = Decimal("0.001")
 
+# 客户产品规格 → 供应商插脚（备货清单写作「产品名+插脚*数量」）
+SPEC_PLUGS = {"MT": "牧田脚", "DE": "得伟脚", "MI": "米沃奇脚"}
+
+
+def plug_for_spec(spec: str) -> str:
+    """按客户产品规格带出插脚；未知规格返回空串，由用户手填。"""
+    return SPEC_PLUGS.get(str(spec or "").strip().upper(), "")
+
 
 def _default_data_dir() -> str:
     if getattr(sys, "frozen", False):
@@ -75,6 +83,7 @@ def _normalize_component(component: dict) -> dict:
         "supplier": supplier_name,
         "supplier_product": product_name,
         "supplier_sku": str(component.get("supplier_sku", "") or "").strip(),
+        "plug": str(component.get("plug", "") or "").strip(),
         "usage_qty": float(usage),
         "remark": str(component.get("remark", "") or "").strip(),
     }
@@ -201,6 +210,31 @@ class SupplierBomStore:
         mapping["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._save()
 
+    def add_components(self, entries: list) -> tuple[int, int]:
+        """批量新增供应商明细，一次落盘。entries = [(key, customer, component), ...]
+
+        同一客户产品下已有「供应商+产品+货号+插脚」完全相同的明细时跳过，
+        返回 (新增数, 跳过重复数)。
+        """
+        added = skipped = 0
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        for key, customer, component in entries:
+            normalized = _normalize_component(component)
+            mapping = self._ensure_mapping(key, customer)
+            signature = (normalized["supplier"], normalized["supplier_product"],
+                         normalized["supplier_sku"], normalized["plug"])
+            existing = {(c["supplier"], c["supplier_product"], c["supplier_sku"], c.get("plug", ""))
+                        for c in mapping["components"]}
+            if signature in existing:
+                skipped += 1
+                continue
+            mapping["components"].append(normalized)
+            mapping["updated_at"] = now
+            added += 1
+        if added:
+            self._save()
+        return added, skipped
+
     def update_component(self, key: str, index: int, customer: dict, component: dict):
         mapping = self.get_mapping(key)
         if mapping is None or not (0 <= index < len(mapping["components"])):
@@ -250,11 +284,12 @@ class SupplierBomStore:
             old["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         else:
             existing = {
-                (c["supplier"], c["supplier_product"], c["supplier_sku"])
+                (c["supplier"], c["supplier_product"], c["supplier_sku"], c.get("plug", ""))
                 for c in target["components"]
             }
             for component in old["components"]:
-                signature = (component["supplier"], component["supplier_product"], component["supplier_sku"])
+                signature = (component["supplier"], component["supplier_product"],
+                             component["supplier_sku"], component.get("plug", ""))
                 if signature not in existing:
                     target["components"].append(component)
                     existing.add(signature)
@@ -310,10 +345,12 @@ def build_requirement(items: list, store: SupplierBomStore) -> dict:
         mapped_customers += 1
         for component in components:
             usage = Decimal(str(component.get("usage_qty", 1)))
+            plug = str(component.get("plug", "") or "").strip()
             row_key = (
                 component["supplier"].strip(),
                 component["supplier_product"].strip(),
                 str(component.get("supplier_sku", "") or "").strip(),
+                plug,
             )
             row = grouped.get(row_key)
             if row is None:
@@ -321,6 +358,7 @@ def build_requirement(items: list, store: SupplierBomStore) -> dict:
                     "supplier": row_key[0],
                     "supplier_product": row_key[1],
                     "supplier_sku": row_key[2],
+                    "plug": row_key[3],
                     "quantity": Decimal("0"),
                     "sources": [],
                 }
@@ -339,7 +377,7 @@ def build_requirement(items: list, store: SupplierBomStore) -> dict:
                     "quantity": row_quantity,
                 })
 
-    rows = sorted(grouped.values(), key=lambda r: (r["supplier"], r["supplier_product"], r["supplier_sku"]))
+    rows = sorted(grouped.values(), key=lambda r: (r["supplier"], r["supplier_product"], r["supplier_sku"], r["plug"]))
     unmapped.sort(key=lambda e: (e["name"], e["sku"], e["spec"]))
     return {
         "rows": rows,
@@ -360,6 +398,16 @@ def _supplier_groups(rows: list):
     return groups
 
 
+def requirement_line(row: dict) -> str:
+    """单款备货写法：「供应商产品名称+插脚*数量」。"""
+    return f"{row['supplier_product']}{row.get('plug', '')}*{format_quantity(row['quantity'])}"
+
+
+def supplier_text(rows: list) -> str:
+    """一家供应商的全部备货内容：各款之间用「，」连接。"""
+    return "，".join(requirement_line(row) for row in rows)
+
+
 def generate_requirement_html(result: dict) -> str:
     """打印版备货清单：按供应商分页，不含客户与订单信息。"""
     rows = result.get("rows", [])
@@ -375,6 +423,7 @@ def generate_requirement_html(result: dict) -> str:
                 "<tr>"
                 f"<td>{index}</td>"
                 f"<td class=\"name\">{escape(row['supplier_product'])}</td>"
+                f"<td>{escape(row.get('plug', '')) or '-'}</td>"
                 f"<td>{escape(row['supplier_sku']) or '-'}</td>"
                 f"<td class=\"qty\">{format_quantity(row['quantity'])}</td>"
                 "</tr>"
@@ -384,11 +433,12 @@ def generate_requirement_html(result: dict) -> str:
             '<h2>备货清单</h2>'
             f'<div class="meta"><span>供应商：<b>{escape(supplier)}</b></span>'
             f'<span>生成时间：{generated}</span></div>'
-            '<table><thead><tr><th style="width:12%">序号</th>'
-            '<th>供应商产品名称</th><th style="width:22%">货号</th>'
-            '<th style="width:16%">数量</th></tr></thead><tbody>'
+            '<table><thead><tr><th style="width:10%">序号</th>'
+            '<th>供应商产品名称</th><th style="width:16%">插脚</th>'
+            '<th style="width:20%">货号</th>'
+            '<th style="width:14%">数量</th></tr></thead><tbody>'
             + "".join(body)
-            + '</tbody><tfoot><tr><td colspan="3" class="total-label">合计</td>'
+            + '</tbody><tfoot><tr><td colspan="4" class="total-label">合计</td>'
             f'<td class="qty total">{format_quantity(subtotal)}</td></tr></tfoot></table>'
             '</div>'
         )
@@ -450,10 +500,10 @@ def requirement_csv_text(result: dict) -> str:
     import io
     output = io.StringIO()
     writer = csv.writer(output, lineterminator="\r\n")
-    writer.writerow(["供应商", "供应商产品名称", "供应商货号", "备货数量", "订单明细", "客户产品明细", "备注"])
+    writer.writerow(["供应商", "供应商产品名称", "插脚", "供应商货号", "备货数量", "订单明细", "客户产品明细", "备注"])
     for row in result.get("rows", []):
         writer.writerow([
-            row["supplier"], row["supplier_product"], row["supplier_sku"],
+            row["supplier"], row["supplier_product"], row.get("plug", ""), row["supplier_sku"],
             format_quantity(row["quantity"]),
             _order_detail_text(row), _customer_detail_text(row), "",
         ])
@@ -468,10 +518,10 @@ def write_requirement_csv(result: dict, path: str):
 
 def requirement_tsv_text(result: dict) -> str:
     """制表符分隔文本，方便直接粘贴到 Excel。"""
-    lines = ["供应商\t供应商产品名称\t供应商货号\t备货数量"]
+    lines = ["供应商\t供应商产品名称\t插脚\t供应商货号\t备货数量"]
     for row in result.get("rows", []):
         lines.append("\t".join([
-            row["supplier"], row["supplier_product"], row["supplier_sku"],
+            row["supplier"], row["supplier_product"], row.get("plug", ""), row["supplier_sku"],
             format_quantity(row["quantity"]),
         ]))
     return "\n".join(lines)

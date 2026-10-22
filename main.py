@@ -477,7 +477,7 @@ class PackingApp:
         bom_pf = ttk.Frame(bom_left)
         bom_pf.pack(fill=tk.BOTH, expand=True)
         bom_cols = ("status","name","sku","spec")
-        self.bom_ptree = ttk.Treeview(bom_pf, columns=bom_cols, show="headings", height=12)
+        self.bom_ptree = ttk.Treeview(bom_pf, columns=bom_cols, show="headings", height=12, selectmode="extended")
         for col, text, width in (("status","状态",70),("name","品名",150),("sku","SKU",95),("spec","规格",50)):
             self.bom_ptree.heading(col, text=text)
             self.bom_ptree.column(col, width=width, minwidth=45)
@@ -500,10 +500,10 @@ class PackingApp:
 
         bom_cf = ttk.Frame(bom_right)
         bom_cf.pack(fill=tk.BOTH, expand=True, pady=(3,0))
-        bom_ccols = ("supplier","product","sku","usage","remark")
+        bom_ccols = ("supplier","product","plug","sku","usage","remark")
         self.bom_ctree = ttk.Treeview(bom_cf, columns=bom_ccols, show="headings", height=10)
-        for col, text, width in (("supplier","供应商",110),("product","供应商产品名称",200),
-                                 ("sku","供应商货号",110),("usage","用量",60),("remark","备注",120)):
+        for col, text, width in (("supplier","供应商",110),("product","供应商产品名称",180),
+                                 ("plug","插脚",80),("sku","供应商货号",100),("usage","用量",55),("remark","备注",100)):
             self.bom_ctree.heading(col, text=text)
             self.bom_ctree.column(col, width=width, minwidth=45)
         bom_cvsb = ttk.Scrollbar(bom_cf, orient=tk.VERTICAL, command=self.bom_ctree.yview)
@@ -529,13 +529,19 @@ class PackingApp:
         ttk.Label(bom_form, text="用量(每1个客户产品):").grid(row=1,column=2,sticky=tk.W,pady=2)
         self.e_bom_usage = ttk.Entry(bom_form, width=10)
         self.e_bom_usage.grid(row=1,column=3,sticky=tk.W,pady=2,padx=(5,0))
-        ttk.Label(bom_form, text="备注:").grid(row=2,column=0,sticky=tk.W,pady=2)
+        ttk.Label(bom_form, text="插脚:").grid(row=2,column=0,sticky=tk.W,pady=2)
+        self.e_bom_plug = ttk.Combobox(bom_form, width=22, values=["牧田脚", "得伟脚", "米沃奇脚"])
+        self.e_bom_plug.grid(row=2,column=1,sticky=tk.EW,pady=2,padx=(5,10))
+        ttk.Label(bom_form, text="备注:").grid(row=2,column=2,sticky=tk.W,pady=2)
         self.e_bom_remark = ttk.Entry(bom_form, width=40)
-        self.e_bom_remark.grid(row=2,column=1,columnspan=3,sticky=tk.EW,pady=2,padx=(5,0))
+        self.e_bom_remark.grid(row=2,column=3,sticky=tk.EW,pady=2,padx=(5,0))
 
         bom_bf = ttk.Frame(bom_form)
         bom_bf.grid(row=3,column=0,columnspan=4,pady=(8,0))
         ttk.Button(bom_bf,text="新增",command=self.add_bom_component,width=8).pack(side=tk.LEFT,padx=2)
+        ttk.Button(bom_bf,text="批量新增",command=self.batch_add_bom_components,width=10).pack(side=tk.LEFT,padx=2)
+        self.bom_auto_plug = tk.BooleanVar(value=True)
+        ttk.Checkbutton(bom_bf, text="批量时插脚按规格自动带出", variable=self.bom_auto_plug).pack(side=tk.LEFT, padx=(2,6))
         ttk.Button(bom_bf,text="修改",command=self.update_bom_component,width=8).pack(side=tk.LEFT,padx=2)
         ttk.Button(bom_bf,text="删除",command=self.delete_bom_component,width=8).pack(side=tk.LEFT,padx=2)
         ttk.Button(bom_bf,text="清空",command=self.clear_bom_form,width=8).pack(side=tk.LEFT,padx=2)
@@ -545,7 +551,8 @@ class PackingApp:
         self.bom_selected = None  # {"key":..., "customer":{...}, "orphan":bool}
         self.bom_selected_component = None
         ttk.Label(bom_right,
-                  text="用量支持小数（最多3位，如 1.5）；备货数量 = 客户数量 × 用量。装箱后可在「装箱作业」或「装箱历史」生成备货清单。",
+                  text="用量支持小数（最多3位，如 1.5）；备货数量 = 客户数量 × 用量。"
+                       "左侧可 Ctrl/Shift 多选客户产品后「批量新增」，插脚按各自规格自动带出（MT=牧田脚、DE=得伟脚、MI=米沃奇脚）。",
                   foreground="#666", wraplength=760, justify=tk.LEFT).pack(anchor=tk.W)
 
     # ===== 产品管理 =====
@@ -710,6 +717,11 @@ class PackingApp:
                 break
         if found is None:
             return
+        if len(sel) > 1:
+            # 多选时不清空表单，方便先选齐再填一次批量新增
+            self.l_bom_current.config(
+                text=f"已选 {len(sel)} 个客户产品（批量新增会套用到全部）  |  当前：{found['name']}")
+            return
         self.bom_selected = {
             "key": key,
             "customer": {"name": found["name"], "sku": found["sku"], "spec": found["spec"]},
@@ -725,6 +737,8 @@ class PackingApp:
         self.l_bom_current.config(text=label)
         self.refresh_bom_components()
         self.clear_bom_form(clear_supplier_values=False)
+        # 插脚按当前客户产品规格自动带出，仍可手改
+        self.e_bom_plug.set(supplier.plug_for_spec(found["spec"]))
 
     def refresh_bom_components(self):
         for i in self.bom_ctree.get_children():
@@ -736,6 +750,7 @@ class PackingApp:
         for index, component in enumerate(components):
             self.bom_ctree.insert("", tk.END, iid=str(index), values=(
                 component["supplier"], component["supplier_product"],
+                component.get("plug", ""),
                 component.get("supplier_sku", ""),
                 supplier.format_quantity(component.get("usage_qty", 1)),
                 component.get("remark", ""),
@@ -756,6 +771,7 @@ class PackingApp:
         self.e_bom_product.insert(0, component["supplier_product"])
         self.e_bom_sku.delete(0, tk.END)
         self.e_bom_sku.insert(0, component.get("supplier_sku", ""))
+        self.e_bom_plug.set(component.get("plug", ""))
         self.e_bom_usage.delete(0, tk.END)
         self.e_bom_usage.insert(0, supplier.format_quantity(component.get("usage_qty", 1)))
         self.e_bom_remark.delete(0, tk.END)
@@ -779,6 +795,7 @@ class PackingApp:
             "supplier": supplier_name,
             "supplier_product": product_name,
             "supplier_sku": self.e_bom_sku.get().strip(),
+            "plug": self.e_bom_plug.get().strip(),
             "usage_qty": float(usage),
             "remark": self.e_bom_remark.get().strip(),
         }
@@ -787,6 +804,7 @@ class PackingApp:
         self.bom_selected_component = None
         self.e_bom_product.delete(0, tk.END)
         self.e_bom_sku.delete(0, tk.END)
+        self.e_bom_plug.set("")
         self.e_bom_usage.delete(0, tk.END)
         self.e_bom_remark.delete(0, tk.END)
         if clear_supplier_values:
@@ -808,6 +826,52 @@ class PackingApp:
         self.refresh_bom_components()
         self.refresh_bom_products()
         self.clear_bom_form()
+
+    def batch_add_bom_components(self):
+        """把同一供应商明细批量套用到左侧选中的多个客户产品。
+
+        插脚按每个客户产品自己的规格自动带出（MT/DE/MI），
+        表单里填的插脚只作为无法识别规格时的兜底。
+        """
+        sel = self.bom_ptree.selection()
+        if not sel:
+            messagebox.showinfo("提示", "请先在左侧选择客户产品（可 Ctrl/Shift 多选）")
+            return
+        component = self._bom_form_component()
+        if not component:
+            return
+        rows_by_key = {row["key"]: row for row in self._bom_products()}
+        entries = []
+        missing_plug = []
+        auto_plug = self.bom_auto_plug.get()
+        for key in sel:
+            found = rows_by_key.get(key)
+            if not found:
+                continue
+            if auto_plug:
+                plug = supplier.plug_for_spec(found["spec"]) or component["plug"]
+            else:
+                plug = component["plug"]
+            if not plug:
+                missing_plug.append(found["name"] + (f"（{found['spec']}）" if found["spec"] else ""))
+            entries.append((key, {"name": found["name"], "sku": found["sku"], "spec": found["spec"]},
+                            dict(component, plug=plug)))
+        if not entries:
+            messagebox.showinfo("提示", "选中的客户产品不存在")
+            return
+        added, skipped = self.supplier_store.add_components(entries)
+        first_key, first_customer = entries[0][0], entries[0][1]
+        self.bom_selected = {"key": first_key, "customer": dict(first_customer, key=first_key), "orphan": False}
+        self.refresh_bom_components()
+        self.refresh_bom_products()
+        self.clear_bom_form()
+        message = f"已为 {added} 个客户产品新增供应商明细"
+        if skipped:
+            message += f"，跳过 {skipped} 个重复明细"
+        if missing_plug:
+            message += f"\n\n以下 {len(missing_plug)} 个产品无法从规格识别插脚，已按空白保存，请补填：\n" \
+                       + "、".join(missing_plug[:10])
+        messagebox.showinfo("批量新增完成", message)
 
     def update_bom_component(self):
         if not self.bom_selected:
@@ -939,16 +1003,14 @@ class PackingApp:
 
         frame = ttk.Frame(win)
         frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
-        cols = ("product", "sku", "qty", "source")
-        tree = ttk.Treeview(frame, columns=cols, show="tree headings", height=16)
-        tree.heading("#0", text="供应商 / 供应商产品")
-        tree.heading("product", text="供应商产品名称")
-        tree.heading("sku", text="供应商货号")
+        cols = ("product", "qty", "source")
+        tree = ttk.Treeview(frame, columns=cols, show="tree headings", height=16, selectmode="extended")
+        tree.heading("#0", text="供应商")
+        tree.heading("product", text="供应商产品（名称+插脚）")
         tree.heading("qty", text="备货数量")
         tree.heading("source", text="来源")
-        tree.column("#0", width=230, minwidth=150)
-        tree.column("product", width=260, minwidth=150)
-        tree.column("sku", width=130, minwidth=80)
+        tree.column("#0", width=170, minwidth=110)
+        tree.column("product", width=380, minwidth=220)
         tree.column("qty", width=90, minwidth=60, anchor=tk.E)
         tree.column("source", width=300, minwidth=120)
         vsb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
@@ -961,11 +1023,15 @@ class PackingApp:
         groups = {}
         for row in result["rows"]:
             groups.setdefault(row["supplier"], []).append(row)
+        # 复制用：iid → 单款明细 / 整家供应商明细
+        row_by_iid = {}
+        supplier_by_iid = {}
         non_integer_rows = []
         for supplier_name, rows in groups.items():
             subtotal = sum((r["quantity"] for r in rows), Decimal("0"))
             parent = tree.insert("", tk.END, text=supplier_name, open=True, values=(
-                "", "", supplier.format_quantity(subtotal), f"{len(rows)} 项"))
+                supplier.supplier_text(rows), supplier.format_quantity(subtotal), f"{len(rows)} 项"))
+            supplier_by_iid[parent] = rows
             for row in rows:
                 source_orders = {}
                 for source in row["sources"]:
@@ -977,10 +1043,11 @@ class PackingApp:
                 )
                 tags = ("non_integer",) if row["quantity"] != row["quantity"].to_integral_value() else ()
                 if tags:
-                    non_integer_rows.append(f"{row['supplier']} / {row['supplier_product']}")
-                tree.insert(parent, tk.END, text="", values=(
-                    row["supplier_product"], row["supplier_sku"],
+                    non_integer_rows.append(f"{row['supplier']} / {row['supplier_product']}{row.get('plug', '')}")
+                iid = tree.insert(parent, tk.END, text="", values=(
+                    f"{row['supplier_product']}{row.get('plug', '')}",
                     supplier.format_quantity(row["quantity"]), source_text), tags=tags)
+                row_by_iid[iid] = row
         tree.tag_configure("non_integer", foreground="#b35c00")
         if non_integer_rows:
             ttk.Label(win, text="以下备货数量为非整数，请人工确认：" + "；".join(non_integer_rows[:8]),
@@ -993,7 +1060,9 @@ class PackingApp:
                    command=lambda: self.print_requirement(result)).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="导出CSV", width=12,
                    command=lambda: self.export_requirement_csv(result)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(buttons, text="复制", width=10,
+        ttk.Button(buttons, text="复制选中", width=12,
+                   command=lambda: self.copy_selected_requirement(tree, row_by_iid, supplier_by_iid)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(buttons, text="复制全部", width=12,
                    command=lambda: self.copy_requirement(result)).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="关闭", width=10, command=win.destroy).pack(side=tk.RIGHT, padx=2)
 
@@ -1014,6 +1083,25 @@ class PackingApp:
             messagebox.showerror("导出失败", f"导出 CSV 失败：{e}")
             return
         messagebox.showinfo("导出成功", f"已导出到：\n{path}")
+
+    def copy_selected_requirement(self, tree, row_by_iid, supplier_by_iid):
+        """复制选中的单款（产品名+插脚*数量）；选中供应商则复制该家全部产品。"""
+        sel = tree.selection()
+        if not sel:
+            messagebox.showinfo("提示", "请先选择要复制的产品，或选中供应商复制整家")
+            return
+        lines = []
+        for iid in sel:
+            if iid in supplier_by_iid:
+                lines.append(supplier.supplier_text(supplier_by_iid[iid]))
+            elif iid in row_by_iid:
+                lines.append(supplier.requirement_line(row_by_iid[iid]))
+        if not lines:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append("\n".join(lines))
+        self.root.update()
+        messagebox.showinfo("已复制", "已复制到剪贴板，可直接粘贴发送给供应商。")
 
     def copy_requirement(self, result):
         text = supplier.requirement_tsv_text(result)
